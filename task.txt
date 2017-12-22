@@ -1,0 +1,2299 @@
+CREATE OR REPLACE PACKAGE BODY STAGING2A."PKG_CIF_PRECHECKS"
+AS
+   --Generate Statement and Insert in Rejection Table
+   PROCEDURE SP_GENERATE_STATEMENT (varTableName        IN VARCHAR2,
+                                    varFieldName        IN VARCHAR2,
+                                    varConstraintName   IN VARCHAR2,
+                                    varErrorMessage     IN VARCHAR2,
+                                    varWhereClause      IN VARCHAR2,
+                                    varAccountNo        IN VARCHAR2)
+   IS
+      varIndex    NUMBER := INSTR (varTableName, '_', 1);
+      varInsert   VARCHAR2 (5000);
+   BEGIN
+      IF varAccountNo IS NULL
+      THEN
+         varInsert :=
+            '
+            INSERT INTO REJECTION_T (
+            BRANCH_CODE, SOURCE_CODE, TABLE_NAME, FIELD_NAME, FIELD_VALUE,
+            CONSTRAINT_NAME, ERROR_MESSAGE, IDENTITY_NO, 
+            IDENTITY_NO_COLUMNS)
+            
+            select '
+            || varBranchField
+            || ', '''
+            || varSourceCode
+            || ''', '''
+            || SUBSTR (varTableName, 1, varIndex - 2)
+            || SUBSTR (varTableName, varIndex)
+            || ''', '''
+            || varFieldName
+            || ''',
+            '
+            || varFieldName
+            || ', '''
+            || varConstraintName
+            || ''', '''
+            || varErrorMessage
+            || ''', '
+            || varIdentityNo
+            || ', '''
+            || varIdentityNo
+            || ''' from '
+            || varWhereClause;
+      ELSE
+         varInsert :=
+            '
+            INSERT INTO REJECTION_T (
+            BRANCH_CODE, SOURCE_CODE, TABLE_NAME, FIELD_NAME, FIELD_VALUE,
+            CONSTRAINT_NAME, ERROR_MESSAGE, IDENTITY_NO, 
+            IDENTITY_NO_COLUMNS, EXT_REF_NO)
+            
+            select '
+            || varBranchField
+            || ', '''
+            || varSourceCode
+            || ''', '''
+            || SUBSTR (varTableName, 1, varIndex - 2)
+            || SUBSTR (varTableName, varIndex)
+            || ''', '''
+            || varFieldName
+            || ''',
+            '
+            || varFieldName
+            || ', '''
+            || varConstraintName
+            || ''', '''
+            || varErrorMessage
+            || ''', '
+            || varIdentityNo
+            || ', '''
+            || varIdentityNo
+            || ''', '
+            || varAccountNo
+            || ' from '
+            || varWhereClause;
+      END IF;
+
+--      DBMS_OUTPUT.PUT_LINE (varInsert);
+
+      EXECUTE IMMEDIATE varInsert;
+
+      ADD_EXCEPTION_MESSAGE ('Customers',
+                             varTableName,
+                             varFieldName,
+                             varErrorMessage);
+   END SP_GENERATE_STATEMENT;
+
+   --Null value Pre-Checks
+   PROCEDURE SP_NULL_VALUES_PRECHECKS (varTableName   IN VARCHAR2,
+                                       varFieldName   IN VARCHAR2,
+                                       varAccountNo   IN VARCHAR2)
+   IS
+      varConstraintName   VARCHAR2 (40) := 'Possible Value';
+
+      varErrorMessage VARCHAR2 (500)
+            := varFieldName || ' has invalid value' ;
+      varInClause         VARCHAR2 (100);
+      varWhereClause      VARCHAR2 (1000);
+   BEGIN
+      varWhereClause :=
+         varTableName || ' where ' || varFieldName || ' is not null ';
+
+      SP_GENERATE_STATEMENT (varTableName,
+                             varFieldName,
+                             varConstraintName,
+                             varErrorMessage,
+                             varWhereClause,
+                             varAccountNo);
+   END SP_NULL_VALUES_PRECHECKS;
+
+
+PROCEDURE SP_MANDATORY_PRECHECKS1 (varTableName IN varchar2, varFieldName IN varchar2, varIdentityNo IN varchar2) IS
+
+    varConstraintName varchar2(100) := 'Mandatory';
+
+    varErrorMessage varchar2(500) := varFieldName || ' is missing';
+    varWhereClause varchar2(1000) := varTableName || ' where ' || varFieldName || ' is NULL';
+
+    BEGIN
+
+        SP_GENERATE_STATEMENT (varTableName, varFieldName, varConstraintName, varErrorMessage, varWhereClause,'1');
+
+    END SP_MANDATORY_PRECHECKS1;
+        
+    
+-- procedure check mandatory fields in personal table for individual customers     
+PROCEDURE SP_MANDATORY_PRECHECKS2 (varTableName IN varchar2, varFieldName IN varchar2, varIdentityNo IN varchar2) IS
+
+    varConstraintName varchar2(100) := 'Mandatory';
+
+    varErrorMessage varchar2(500) := varFieldName || ' is mandatory for individual customers';
+    varWhereClause varchar2(1000) := varTableName || ' where customer_no in (select customer_no from sttmf_upload_customer where customer_type = ''I'') and ' || varFieldName || ' is NULL' ;
+
+    BEGIN
+
+        SP_GENERATE_STATEMENT (varTableName, varFieldName, varConstraintName, varErrorMessage, varWhereClause,'1');
+
+    END SP_MANDATORY_PRECHECKS2;
+    
+    
+-- procedure check mandatory fields in personal table for corporate  customers     
+PROCEDURE SP_CHECK_PERSONAL_CORP (varTableName IN varchar2, varFieldName IN varchar2, varIdentityNo IN varchar2) IS
+
+    varConstraintName varchar2(100) := 'Mandatory';
+
+    varErrorMessage varchar2(500) := varFieldName || ' should be null for corporate customers';
+    varWhereClause varchar2(1000) := varTableName || ' where CUSTOMER_NO IN ( SELECT CUSTOMER_NO FROM STTMF_UPLOAD_CUSTOMER WHERE CUSTOMER_TYPE = ''C'') AND ' || varFieldName || ' is not NULL' ;
+
+    BEGIN
+
+        SP_GENERATE_STATEMENT (varTableName, varFieldName, varConstraintName, varErrorMessage, varWhereClause,'1');
+
+    END SP_CHECK_PERSONAL_CORP;
+    
+    
+   --Mandatory Pre-Checks
+   PROCEDURE SP_MANDATORY_PRECHECKS (varTableName   IN VARCHAR2,
+                                     varFieldName   IN VARCHAR2,
+                                     varAccountNo   IN VARCHAR2)
+   IS
+      varConstraintName   VARCHAR2 (40) := 'Mandatory';
+
+      varErrorMessage     VARCHAR2 (40) := varFieldName || ' is missing';
+      varWhereClause VARCHAR2 (1000)
+            := varTableName || ' where ' || varFieldName || ' is null' ;
+   BEGIN
+      --IF varTableName <> 'STTMF_UPLOAD_CUST_PERSONAL'
+        -- AND (varFieldName <> 'CUSTOMER_PREFIX'
+         --     OR varFieldName <> 'DATE_OF_BIRTH')
+     -- THEN
+         SP_GENERATE_STATEMENT (varTableName,
+                                varFieldName,
+                                varConstraintName,
+                                varErrorMessage,
+                                varWhereClause,
+                                varAccountNo);
+     -- END IF;
+   END SP_MANDATORY_PRECHECKS;
+
+   --Lookup Pre-Checks
+   --varMatchingCriteria: 0=CASE, 1=UPPER, 2=LOWER, 3=TITLE
+   PROCEDURE SP_LOOKUP_PRECHECKS (varTableName          IN VARCHAR2,
+                                  varFieldName          IN VARCHAR2,
+                                  varAccountNo          IN VARCHAR2,
+                                  varFKTableName        IN VARCHAR2,
+                                  varFKFieldName        IN VARCHAR2,
+                                  varMatchingCriteria   IN NUMBER)
+   IS
+      varConstraintName   VARCHAR2 (40) := 'Lookup';
+
+      varErrorMessage VARCHAR2 (40)
+            := varFieldName || ' has invalid value' ;
+      varWhereClause      VARCHAR2 (1000);
+   BEGIN
+      IF    varFieldName = 'CUSTOMER_PREFIX'
+         OR varFieldName = 'CUSTOMER_PREFIX1'
+         OR varFieldName = 'CUSTOMER_PREFIX2'
+      THEN
+         varWhereClause :=
+               varTableName
+            || ' where '
+            || varFieldName
+            || ' is not null and ('
+            || varBranchField
+            || ' , INITCAP('
+            || varFieldName
+            || ') ) not in 
+                    (select BRANCH_CODE , '
+            || varFKFieldName
+            || ' from '
+            || varFKTableName
+            || ')';
+      ELSE
+         IF varMatchingCriteria = 1
+         THEN
+            varWhereClause :=
+                  varTableName
+               || ' where '
+               || varFieldName
+               || ' is not null and UPPER('
+               || varFieldName
+               || ') not in 
+                    (select '
+               || varFKFieldName
+               || ' from '
+               || varFKTableName
+               || ' where';
+         ELSIF varMatchingCriteria = 2
+         THEN
+            varWhereClause :=
+                  varTableName
+               || ' where '
+               || varFieldName
+               || ' is not null and LOWER('
+               || varFieldName
+               || ') not in 
+                    (select '
+               || varFKFieldName
+               || ' from '
+               || varFKTableName
+               || ' where';
+         ELSIF varMatchingCriteria = 3
+         THEN
+            varWhereClause :=
+                  varTableName
+               || ' where '
+               || varFieldName
+               || ' is not null and INITCAP('
+               || varFieldName
+               || ') not in 
+                    (select '
+               || varFKFieldName
+               || ' from '
+               || varFKTableName
+               || ' where';
+         ELSE
+            varWhereClause :=
+                  varTableName
+               || ' where '
+               || varFieldName
+               || ' is not null and '
+               || varFieldName
+               || ' not in (select
+                    '
+               || varFKFieldName
+               || ' from '
+               || varFKTableName
+               || ' where';
+         END IF;
+         IF varFKTableName = 'STTMF_UPLOAD_CUSTOMER'
+             THEN
+                varWhereClause :=
+                      varTableName
+                   || ' where '
+                   || varFieldName
+                   || ' is not null and '
+                   || varFieldName
+                   || ' not in (select
+                        '
+                   || varFKFieldName
+                   || ' from '
+                   || varFKTableName
+                   || ')';
+             ELSE
+                varWhereClause :=
+                   varWhereClause || ' auth_stat=''A'' and record_stat=''O'')';
+         END IF;
+         
+      END IF;
+
+      SP_GENERATE_STATEMENT (varTableName,
+                             varFieldName,
+                             varConstraintName,
+                             varErrorMessage,
+                             varWhereClause,
+                             varAccountNo);
+   END SP_LOOKUP_PRECHECKS;
+
+
+    -- Lookup precheck for Liablity -- Added by ZARQ for BOP
+    PROCEDURE SP_LIAB_LOOKUP_PRECHECKS (varTableName IN VARCHAR2, varFieldName IN VARCHAR2, varAccountNo IN VARCHAR2, varFKTableName IN VARCHAR2, varFKFieldName IN VARCHAR2)
+        IS
+          varConstraintName   VARCHAR2 (40) := 'Lookup';
+
+          varErrorMessage VARCHAR2 (40) := varFieldName || ' has invalid value' ;
+          varWhereClause      VARCHAR2 (1000);
+       BEGIN
+          
+          varWhereClause := varTableName || ' where ' || varFieldName || ' is not null and ' || varFieldName || ' not in ( select ' || varFKFieldName || ' from ' || varFKTableName || ')' ;              
+               
+          SP_GENERATE_STATEMENT (varTableName, varFieldName, varConstraintName, varErrorMessage, varWhereClause, varAccountNo);
+          
+       END SP_LIAB_LOOKUP_PRECHECKS;
+
+
+   -- General Lookup Pre-Checks
+
+   PROCEDURE SP_LOOKUP_PRE_CHECKS2 (varTableName     IN VARCHAR2,
+                                    varFieldName     IN VARCHAR2,
+                                    varAccountNo     IN VARCHAR2,
+                                    varFKTableName   IN VARCHAR2,
+                                    varFKFieldName   IN VARCHAR2)
+   IS
+      varConstraintName   VARCHAR2 (100);
+
+      varErrorMessage     VARCHAR2 (500);
+      varWhereClause      VARCHAR2 (1000);
+   BEGIN
+      varConstraintName := 'Lookup';
+
+      varErrorMessage := varFieldName || ' has invalid value';
+      varWhereClause :=
+            varTableName
+         || ' where '
+         || varFieldName
+         || ' is not null and ('
+         || varBranchField
+         || ' , '
+         || varFieldName
+         || ') not in (select BRANCH_CODE , '
+         || varFKFieldName
+         || ' from '
+         || varFKTableName
+         || ')';
+
+      SP_GENERATE_STATEMENT (varTableName,
+                             varFieldName,
+                             varConstraintName,
+                             varErrorMessage,
+                             varWhereClause,
+                             varAccountNo);
+   END SP_LOOKUP_PRE_CHECKS2;
+
+
+   --Possible Values Pre-Checks
+   PROCEDURE SP_POSSIBLE_VALUES_PRECHECKS (varTableName   IN VARCHAR2,
+                                           varFieldName   IN VARCHAR2,
+                                           varAccountNo   IN VARCHAR2)
+   IS
+      varConstraintName   VARCHAR2 (40) := 'Possible Value';
+
+      varErrorMessage VARCHAR2 (500)
+            := varFieldName || ' has invalid value' ;
+      varInClause         VARCHAR2 (100);
+      varWhereClause      VARCHAR2 (1000);
+   BEGIN
+      IF varFieldName = 'CUSTOMER_TYPE'
+      THEN
+         varInClause := '(''B'', ''I'', ''C'')';
+      ELSIF varFieldName = 'UNIQUE_ID_NAME'
+      THEN
+         varInClause :=
+            '(''CNIC'',''NTN'',''PASSPORT NUMBER'',''NAME OF GOVT DEPTT'',''REGISTRATION NUMBER'')';
+      ELSIF varFieldName = 'ACTION_CODE'
+      THEN
+         varInClause := '(''NEW'',''MODIFY'',''CLOSE'')';
+      ELSIF varFieldName = 'EMPLOYMENT_STATUS'
+      THEN
+         varInClause :=
+            '(''S'', ''P'', ''R'', ''N'', ''O'', ''U'', ''T'', ''F'')';
+      ELSIF varFieldName = 'SEX'
+      THEN
+         varInClause := '(''M'',''F'')';
+      ELSIF varFieldName = 'RESIDENT_STATUS'
+      THEN
+         varInClause := '(''R'',''N'')';
+      ELSIF varFieldName = 'FUNCTION_ID'
+      THEN
+         varInClause := '(''STDCIF'', ''STDCUSAC'', ''IADCUSAC'')';
+      ELSIF varFieldName = 'ELCM_CUSTOMER' -- ADDED 3/2/15--
+      THEN
+         varInClause := '(''Y'')';      
+      ELSIF varFieldName = 'EDUCATIONAL_STATUS'
+      THEN
+         varInClause := '(''G'',''P'',''U'',''N'')';
+      ELSE
+         varInClause := '(''Y'', ''N'')';
+      END IF;
+
+      varWhereClause :=
+            varTableName
+         || ' where '
+         || varFieldName
+         || ' is not null and '
+         || varFieldName
+         || ' not in '
+         || varInClause;
+
+      SP_GENERATE_STATEMENT (varTableName,
+                             varFieldName,
+                             varConstraintName,
+                             varErrorMessage,
+                             varWhereClause,
+                             varAccountNo);
+   END SP_POSSIBLE_VALUES_PRECHECKS;
+
+   --Regular Expression Pre-Checks
+   PROCEDURE SP_REGEX_PRECHECKS (varTableName   IN VARCHAR2,
+                                 varFieldName   IN VARCHAR2,
+                                 varAccountNo   IN VARCHAR2)
+   IS
+      varConstraintName     VARCHAR2 (40) := 'Regular Expression';
+
+      varErrorMessage VARCHAR2 (40)
+            := varFieldName || ' has invalid characters' ;
+      varExpressionClause   VARCHAR2 (2000);
+      varWhereClause        VARCHAR2 (5000);
+   BEGIN
+      IF varFieldName = 'CUSTOMER_NO'
+      THEN
+         varExpressionClause :=
+            'not REGEXP_LIKE(' || varFieldName || ',''^[[:digit:]]{8}$'')';
+      ELSIF varFieldName = 'CUSTOMER_NAME1' OR varFieldName = 'ADDRESS_LINE1' OR varFieldName = 'ADDRESS_LINE2' OR varFieldName = 'SHORT_NAME' OR varFieldName = 'SHORT_NAME2' OR varFieldName = 'FULL_NAME' OR varFieldName = 'E_ADDRESS1' OR varFieldName = 'E_ADDRESS2' OR varFieldName = 'CORPORATE_NAME' OR varFieldName = 'R_ADDRESS1' OR varFieldName = 'R_ADDRESS2' OR varFieldName = 'FIRST_NAME' OR varFieldName = 'MIDDLE_NAME' OR varFieldName = 'LAST_NAME' OR varFieldName = 'D_ADDRESS1' OR varFieldName = 'D_ADDRESS2' OR varFieldName = 'P_ADDRESS1' OR varFieldName = 'P_ADDRESS2'
+      THEN
+         --varExpressionClause := 'REGEXP_LIKE(' || varFieldName || ',''^(-*[a-zA-Z0-9 | \\+ | \\( | \\) | \\? | \\: | \\/ | \\, | \\. | '']*-*)+$'')';
+         varExpressionClause :=
+               'INSTR('
+            || varFieldName
+            || ',''!'',1)<>0 OR INSTR('
+            || varFieldName
+            || ',''@'',1)<>0 OR INSTR('
+            || varFieldName
+            || ',''#'',1)<>0 OR INSTR('
+            || varFieldName
+            || ',''$'',1)<>0 OR INSTR('
+            || varFieldName
+            || ',''%'',1)<>0 OR INSTR('
+            || varFieldName
+            || ',''^'',1)<>0 OR INSTR('
+            || varFieldName
+            || ',''&'',1)<>0 OR INSTR('
+            || varFieldName
+            || ',''*'',1)<>0 OR INSTR('
+            || varFieldName
+            || ','';'',1)<>0 OR INSTR('
+            || varFieldName
+            || ',''|'',1)<>0 OR INSTR('
+            || varFieldName
+            || ',''\'',1)<>0 OR INSTR('
+            || varFieldName
+            || ',''='',1)<>0 OR INSTR('
+            || varFieldName
+            || ',''_'',1)<>0 OR INSTR('
+            || varFieldName
+            || ',''<'',1)<>0 OR INSTR('
+            || varFieldName
+            || ',''>'',1)<>0 OR INSTR('
+            || varFieldName
+            || ',''{'',1)<>0 OR INSTR('
+            || varFieldName
+            || ',''}'',1)<>0 OR INSTR('
+            || varFieldName
+            || ',''['',1)<>0 OR INSTR('
+            || varFieldName
+            || ','']'',1)<>0 OR INSTR('
+            || varFieldName
+            || ',''"'',1)<>0';
+         RETURN;
+      ELSIF varFieldName = 'FAX_NUMBER' OR varFieldName = 'E_TELEPHONE' OR varFieldName = 'E_FAX' OR varFieldName = 'TELEPHONE' OR varFieldName = 'FAX'
+      THEN
+         varExpressionClause :=
+               'not REGEXP_LIKE('
+            || varFieldName
+            || ',''^[- | [:alnum:] | [:space:]]+$'')';
+      ELSIF varFieldName = 'E_EMAIL' OR varFieldName = 'E_MAIL'
+      THEN
+         varExpressionClause :=
+            ' not REGEXP_LIKE(' || varFieldName
+            || ',''^[a-zA-Z][a-zA-Z|0-9|]*([_][a-zA-Z|0-9]+)*([.][a-zA-Z|0-9]+([_][a-zA-Z|0-9]+)*)?@[a-zA-Z][a-zA-Z|0-9|]*\.([a-zA-Z][a-zA-Z|0-9]*(\.[a-zA-Z][a-zA-Z|0-9]*)?)$'')';
+      -- varExpressionClause := 'INSTR('||varFieldName||',''!'',1)<>0 OR INSTR('||varFieldName ||',''@'',1)<>0 OR INSTR(' || varFieldName ||',''#'',1)<>0 OR INSTR(' || varFieldName ||',''$'',1)<>0 OR INSTR(' || varFieldName ||',''%'',1)<>0 OR INSTR(' || varFieldName ||',''^'',1)<>0 OR INSTR(' || varFieldName ||',''&'',1)<>0 OR INSTR(' || varFieldName ||',''*'',1)<>0 OR INSTR(' || varFieldName ||','';'',1)<>0 OR INSTR(' || varFieldName ||',''|'',1)<>0 OR INSTR(' || varFieldName ||',''\'',1)<>0 OR INSTR(' || varFieldName ||',''='',1)<>0 OR INSTR(' || varFieldName ||',''_'',1)<>0 OR INSTR(' || varFieldName ||',''<'',1)<>0 OR INSTR(' || varFieldName ||',''>'',1)<>0 OR INSTR(' || varFieldName ||',''{'',1)<>0 OR INSTR(' || varFieldName ||',''}'',1)<>0 OR INSTR(' || varFieldName ||',''['',1)<>0 OR INSTR(' || varFieldName ||','']'',1)<>0 OR INSTR(' || varFieldName ||',''"'',1)<>0';
+      END IF;
+
+      varWhereClause := varTableName || ' where ' || varExpressionClause;
+
+      SP_GENERATE_STATEMENT (varTableName,
+                             varFieldName,
+                             varConstraintName,
+                             varErrorMessage,
+                             varWhereClause,
+                             varAccountNo);
+   END SP_REGEX_PRECHECKS;
+
+   --Mask Pre-Checks
+   PROCEDURE SP_MASK_PRECHECKS (varTableName   IN VARCHAR2,
+                                varFieldName   IN VARCHAR2,
+                                varAccountNo   IN VARCHAR2)
+   IS
+      varConstraintName   VARCHAR2 (40) := 'Mask Compliance';
+
+      varErrorMessage VARCHAR2 (250)
+            := varFieldName || ' is not Mask compliant' ;
+      varMaskClause       VARCHAR2 (100);
+      varWhereClause      VARCHAR2 (1000);
+   BEGIN
+      IF varFieldName = 'CUSTOMER_NO'
+      THEN
+         varMaskClause := ' <= 0 OR LENGTH(' || varFieldName || ') != 8';
+      ELSIF varFieldName = 'BRANCH_CODE' OR varFieldName = 'LOCAL_BRANCH'
+      THEN
+         varMaskClause :=
+            ' NOT IN (SELECT BRANCH_CODE FROM MIGRATING_BRANCHES)';
+         varConstraintName := 'Invalid ' || varFieldName;
+         varErrorMessage :=
+            varFieldName
+            || ' should be equal to one of migrating branch codes defined in table MIGRATING_BRANCHES ';
+      ELSIF varFieldName = 'LIABILITY_NO'
+      THEN
+         varMaskClause := ' != CUSTOMER_NO';
+         varConstraintName := 'Invalid ' || varFieldName;
+         varErrorMessage := varFieldName || ' should be equal to Customer_No.';
+      ELSIF varFieldName = 'RETIREMENT_AGE'
+      THEN
+         varMaskClause := ' < 0';
+         varConstraintName := 'Invalid ' || varFieldName;
+         varErrorMessage := varFieldName || ' should be positive number.';
+      ELSIF varFieldName = 'EMPLOYMENT_TENURE'
+      THEN
+         varMaskClause := ' < 0';
+         varConstraintName := 'Invalid ' || varFieldName;
+         varErrorMessage := varFieldName || ' should be positive number.';
+      ELSIF varFieldName = 'DEPENDENT_OTHERS'
+      THEN
+         varMaskClause := ' < 0';
+         varConstraintName := 'Invalid ' || varFieldName;
+         varErrorMessage := varFieldName || ' should be positive number.';
+      ELSIF varFieldName = 'CUSTOMER_NAME1'
+      THEN
+         varMaskClause :=
+            ' IS NOT NULL AND LENGTH(' || varFieldName || ') > 35';
+         varErrorMessage :=
+            'Length of CUSTOMER_NAME1 cannot be greater than 35 characters.';
+      ELSIF varFieldName = 'CORPORATE_NAME'
+      THEN
+         varMaskClause :=
+            ' IS NOT NULL AND LENGTH(' || varFieldName || ') > 35';
+         varErrorMessage :=
+            'Length of CORPORATE_NAME cannot be greater than 35 characters.';
+      ELSIF varFieldName = 'PCT_HOLDING'
+      THEN
+         varMaskClause :=
+            ' < 0 OR ' || varFieldName || ' > 100';
+         varErrorMessage :=
+            varFieldName || ' should be between 0 and 100.';
+      ELSIF varFieldName = 'INCORP_DATE'
+      THEN
+         varMaskClause :=
+               ' IS NOT NULL AND '
+            || varFieldName
+            || ' >= GLOBAL.APPLICATION_DATE('
+            || varBranchField
+            || ')';
+         varErrorMessage :=
+            'INCORP_DATE should be less than Application branch date.';
+      END IF;
+
+      varWhereClause :=
+         varTableName || ' where ' || varFieldName || varMaskClause;
+
+      SP_GENERATE_STATEMENT (varTableName,
+                             varFieldName,
+                             varConstraintName,
+                             varErrorMessage,
+                             varWhereClause,
+                             varAccountNo);
+   END SP_MASK_PRECHECKS;
+
+
+   --Mandatory Pre-Checks
+   PROCEDURE SP_CNIC_EXIST (varTableName   IN VARCHAR2,
+                            varFieldName   IN VARCHAR2,
+                            varAccountNo   IN VARCHAR2)
+   IS
+      varConstraintName   VARCHAR2 (80) := 'UNIQUE_ID_VALUE Exist';
+
+      varErrorMessage VARCHAR2 (200)
+            := varFieldName
+               || ' is already exist in FLEXCUBE. You cannot use this UNIQUE_ID_VALUE for the given Customer, otherwise the customer cannot be migrate.' ;
+      varWhereClause VARCHAR2 (1000)
+            := varTableName || ' where ' || varFieldName
+               || ' is not null AND UNIQUE_ID_VALUE IN (SELECT UNIQUE_ID_VALUE FROM STTMS_CUSTOMER)' ;
+   BEGIN
+      SP_GENERATE_STATEMENT (varTableName,
+                             varFieldName,
+                             varConstraintName,
+                             varErrorMessage,
+                             varWhereClause,
+                             varAccountNo);
+   END SP_CNIC_EXIST;
+
+
+   --Unique Pre-Checks
+   -- Corporate Director exist checks -- Created by Ahmad Qureshi
+   PROCEDURE SP_DIRECTORS_PRECHECKS (varTableName   IN VARCHAR2,
+                            varFieldName   IN VARCHAR2,
+                            varAccountNo   IN VARCHAR2)
+   IS
+      varConstraintName   VARCHAR2 (80) := 'Coprorate Director Issue';
+
+      varErrorMessage VARCHAR2 (200)
+            := varFieldName
+               || ' exists in Directors category but is not included in corporate customer category!' ;
+      varWhereClause VARCHAR2 (1000)
+            := varTableName || ' where ' || varFieldName
+               || ' is not null AND CUSTOMER_NO IN (SELECT CUSTOMER_NO FROM STTMS_CUSTOMER WHERE CUSTOMER_TYPE = ''I'')'; 
+   BEGIN
+      SP_GENERATE_STATEMENT (varTableName,
+                             varFieldName,
+                             varConstraintName,
+                             varErrorMessage,
+                             varWhereClause,
+                             varAccountNo);
+   END SP_DIRECTORS_PRECHECKS;
+      -- Corporate Director exist checks
+   PROCEDURE SP_UNIQUE_PRECHECKS (varTableName   IN VARCHAR2,
+                                  varFieldName   IN VARCHAR2,
+                                  varAccountNo   IN VARCHAR2)
+   IS
+      varConstraintName   VARCHAR2 (40) := 'Unique';
+
+      varErrorMessage VARCHAR2 (40)
+            := varFieldName || ' should be unique' ;
+      varWhereClause      VARCHAR2 (1000);
+   BEGIN
+      varWhereClause :=
+            varTableName
+         || ' where '
+         || varFieldName
+         || ' IS NOT NULL AND '
+         || varFieldName
+         || ' in (select '
+         || varFieldName
+         || ' from '
+         || varTableName
+         || ' group by '
+         || varFieldName
+         || ' having count('
+         || varFieldName
+         || ') > 1)';
+
+      SP_GENERATE_STATEMENT (varTableName,
+                             varFieldName,
+                             varConstraintName,
+                             varErrorMessage,
+                             varWhereClause,
+                             varAccountNo);
+   END SP_UNIQUE_PRECHECKS;
+   
+   
+--   --CUSTOMER UNIQUENESS
+   PROCEDURE SP_UNIQUE_BANK_WISE (varTableName   IN VARCHAR2,
+                                  varFieldName   IN VARCHAR2,
+                                  varAccountNo   IN VARCHAR2)
+   IS
+      varConstraintName   VARCHAR2 (40) := 'Unique Customer';
+
+      varErrorMessage VARCHAR2 (40)
+            := varFieldName || ' already exists in Bank' ;
+      varWhereClause      VARCHAR2 (1000);
+   BEGIN
+      varWhereClause := varTableName || ' where ' || varFieldName || ' IS NOT NULL AND ' || varFieldName || ' in (select ' || varFieldName || ' from STTMs_CUSTOMER)';
+
+      SP_GENERATE_STATEMENT (varTableName,
+                             varFieldName,
+                             varConstraintName,
+                             varErrorMessage,
+                             varWhereClause,
+                             varAccountNo);
+   END SP_UNIQUE_BANK_WISE;
+  
+
+   PROCEDURE SP_VERIFY_BANK_CUSTOMER (varTableName   IN VARCHAR2,
+                                  varFieldName   IN VARCHAR2,
+                                  varAccountNo   IN VARCHAR2)
+   IS
+      varConstraintName   VARCHAR2 (40) := 'BANK TYPE CUSTOMER';
+
+      varErrorMessage VARCHAR2 (60)
+            := varFieldName || ' CUSTOMER DATA NOT ALLOWED IN THIS TABLE' ;
+      varWhereClause      VARCHAR2 (1000);
+   BEGIN
+      varWhereClause := varTableName || ' WHERE ' || varFieldName || ' IN (SELECT ' || varFieldName || ' FROM STTMF_UPLOAD_CUSTOMER WHERE CUSTOMER_TYPE = ''B'')';
+
+      SP_GENERATE_STATEMENT (varTableName,
+                             varFieldName,
+                             varConstraintName,
+                             varErrorMessage,
+                             varWhereClause,
+                             varAccountNo);
+   END SP_VERIFY_BANK_CUSTOMER;
+  
+
+   --Procedure to Validate Customer Classification added dated: 27-12-12 by Imran
+   PROCEDURE SP_LOOKUP_CUST_CLASS (varTableName   IN VARCHAR2,
+                                   varFieldName   IN VARCHAR2,
+                                   varAccountNo   IN VARCHAR2)
+   IS
+      varConstraintName   VARCHAR2 (100) := 'Invalid Customer Classification';
+
+      varErrorMessage VARCHAR2 (500)
+            := varFieldName
+               || ' field has such value which doesnot exist in STTM_CUST_CLASSIFICATION' ;
+      varWhereClause      VARCHAR2 (1000);
+   BEGIN
+      varWhereClause :=
+         varTableName
+         || ' d1 WHERE d1.CUST_CLASSIFICATION IS NOT NULL AND d1.CUST_CLASSIFICATION NOT IN (SELECT d2.CUST_CLASSIFICATION FROM STTMS_CUST_CLASSIFICATION d2 WHERE d2.RECORD_STAT = ''O'' AND  d2.AUTH_STAT = ''A'')';
+
+      SP_GENERATE_STATEMENT (varTableName,
+                             varFieldName,
+                             varConstraintName,
+                             varErrorMessage,
+                             varWhereClause,
+                             varAccountNo);
+   END SP_LOOKUP_CUST_CLASS;
+
+
+   --Procedure to Validate Customer Category Null check added dated: 28-12-12 by Imran
+   PROCEDURE SP_VALIDATE_CUST_CAT (varTableName   IN VARCHAR2,
+                                   varFieldName   IN VARCHAR2,
+                                   varAccountNo   IN VARCHAR2)
+   IS
+      varConstraintName   VARCHAR2 (100) := 'Customer Category is NULL';
+
+      varErrorMessage VARCHAR2 (500)
+            := varFieldName
+               || ' is missing. It should have one of the Values in STTMS_CUSTOMER_CAT' ;
+      varWhereClause      VARCHAR2 (1000);
+   BEGIN
+      varWhereClause :=
+         varTableName || ' d1 WHERE d1.CUSTOMER_CATEGORY IS NULL';
+
+      SP_GENERATE_STATEMENT (varTableName,
+                             varFieldName,
+                             varConstraintName,
+                             varErrorMessage,
+                             varWhereClause,
+                             varAccountNo);
+   END SP_VALIDATE_CUST_CAT;
+
+
+   --Procedure to Validate Customer Category Null check added dated: 28-12-12 by Imran
+   PROCEDURE SP_VALIDATE_CUST_TYPE (varTableName   IN VARCHAR2,
+                                    varFieldName   IN VARCHAR2,
+                                    varAccountNo   IN VARCHAR2)
+   IS
+      varConstraintName   VARCHAR2 (100) := 'Customer Type is NULL';
+
+      varErrorMessage     VARCHAR2 (500) := varFieldName || ' is missing.';
+      varWhereClause      VARCHAR2 (1000);
+   BEGIN
+      varWhereClause := varTableName || ' d1 WHERE d1.CUSTOMER_TYPE IS NULL';
+
+      SP_GENERATE_STATEMENT (varTableName,
+                             varFieldName,
+                             varConstraintName,
+                             varErrorMessage,
+                             varWhereClause,
+                             varAccountNo);
+   END SP_VALIDATE_CUST_TYPE;
+
+
+   PROCEDURE SP_CUST_NO_IS_IN_PESONAL (varTableName   IN VARCHAR2,
+                                       varFieldName   IN VARCHAR2,
+                                       varAccountNo   IN VARCHAR2)
+   IS
+      varConstraintName   VARCHAR2 (40) := 'Not Exist';
+
+      varErrorMessage VARCHAR2 (200)
+            := varFieldName || ' is not exist in STTMF_UPLOAD_CUST_PERSONAL.' ;
+      varWhereClause VARCHAR2 (1000)
+            :=    varTableName
+               || ' where '
+               || varFieldName
+               || ' is not NULL AND CUSTOMER_TYPE = ''I''  AND '
+               || varFieldName
+               || ' NOT IN (SELECT CUSTOMER_NO FROM STTMF_UPLOAD_CUST_PERSONAL)' ;
+   BEGIN
+      SP_GENERATE_STATEMENT (varTableName,
+                             varFieldName,
+                             varConstraintName,
+                             varErrorMessage,
+                             varWhereClause,
+                             varAccountNo);
+   END SP_CUST_NO_IS_IN_PESONAL;
+   
+   --Procedure to Validate all Corporate Customer Exists in Corporate table added dated: 11-12-15 by Zarq
+   PROCEDURE SP_VERIFY_CORP_CUSTOMER (varTableName   IN VARCHAR2,
+                                       varFieldName   IN VARCHAR2,
+                                       varAccountNo   IN VARCHAR2)
+   IS
+      varConstraintName   VARCHAR2 (40) := 'Not Exist in Corporate';
+
+      varErrorMessage VARCHAR2 (200) := 'Customer of Corp type not exist in STTMF_UPLOAD_CUST_CORPORATE.' ;
+            
+      varWhereClause VARCHAR2 (1000) := varTableName || ' where ' || varFieldName || ' is not NULL AND CUSTOMER_TYPE = ''C''  AND CUSTOMER_NO NOT IN (SELECT CUSTOMER_NO FROM STTMF_UPLOAD_CUST_CORPORATE)' ;
+      
+   BEGIN
+      SP_GENERATE_STATEMENT (varTableName,
+                             varFieldName,
+                             varConstraintName,
+                             varErrorMessage,
+                             varWhereClause,
+                             varAccountNo);
+   END SP_VERIFY_CORP_CUSTOMER;
+
+
+--  Procedure to varify that P_NATIONAL_ID  should be NULL for corporate customers      --Added by Moin
+   PROCEDURE SP_CORP_NATIONAL_ID_PRECHECKS(varTableName   IN VARCHAR2,
+                                       varFieldName   IN VARCHAR2,
+                                       varAccountNo   IN VARCHAR2)
+   IS
+      varConstraintName   VARCHAR2 (40) := 'P_NATIONAL_ID is not NULL';
+
+      varErrorMessage VARCHAR2 (200) := 'P_NATIONAL_ID  should be NULL for corporate customers.' ;
+            
+      varWhereClause VARCHAR2 (1000) := varTableName || ' where ' || varFieldName || ' is not NULL AND CUSTOMER_NO IN (SELECT CUSTOMER_NO FROM STTMF_UPLOAD_CUSTOMER WHERE CUSTOMER_TYPE = ''C'' )' ;
+      
+   BEGIN
+      SP_GENERATE_STATEMENT (varTableName,
+                             varFieldName,
+                             varConstraintName,
+                             varErrorMessage,
+                             varWhereClause,
+                             varAccountNo);
+   END SP_CORP_NATIONAL_ID_PRECHECKS;
+   
+   
+   PROCEDURE SP_CUST_NO_IS_IN_FCC (varTableName   IN VARCHAR2,
+                                   varFieldName   IN VARCHAR2,
+                                   varAccountNo   IN VARCHAR2)
+   IS
+      varConstraintName   VARCHAR2 (40) := 'Already Exist';
+
+      varErrorMessage VARCHAR2 (200)
+            := varFieldName
+               || ' is already exist in Flexcube.You cannot use this customer_no. Please use some other customer_no.' ;
+      varWhereClause VARCHAR2 (1000)
+            :=    varTableName
+               || ' where '
+               || varFieldName
+               || ' is not NULL AND '
+               || varFieldName
+               || ' IN (SELECT CUSTOMER_NO FROM STTMS_CUSTOMER)' ;
+   BEGIN
+      SP_GENERATE_STATEMENT (varTableName,
+                             varFieldName,
+                             varConstraintName,
+                             varErrorMessage,
+                             varWhereClause,
+                             varAccountNo);
+   END SP_CUST_NO_IS_IN_FCC;
+
+
+   PROCEDURE SP_SHORT_NAME_IS_IN_FCC (varTableName   IN VARCHAR2,
+                                      varFieldName   IN VARCHAR2,
+                                      varAccountNo   IN VARCHAR2)
+   IS
+      varConstraintName   VARCHAR2 (40) := 'Already Exist';
+
+      varErrorMessage VARCHAR2 (200)
+            := varFieldName
+               || ' is already exist in Flexcube.You cannot use this short name because it is unique.' ;
+      varWhereClause VARCHAR2 (1000)
+            :=    varTableName
+               || ' where '
+               || varFieldName
+               || ' is not NULL AND '
+               || varFieldName
+               || ' IN (SELECT SHORT_NAME FROM STTMS_CUSTOMER)' ;
+   BEGIN
+      SP_GENERATE_STATEMENT (varTableName,
+                             varFieldName,
+                             varConstraintName,
+                             varErrorMessage,
+                             varWhereClause,
+                             varAccountNo);
+   END SP_SHORT_NAME_IS_IN_FCC;
+
+
+   PROCEDURE SP_EXT_REF_IS_IN_FCC (varTableName   IN VARCHAR2,
+                                   varFieldName   IN VARCHAR2,
+                                   varAccountNo   IN VARCHAR2)
+   IS
+      varConstraintName   VARCHAR2 (40) := 'Already Exist';
+
+      varErrorMessage VARCHAR2 (200)
+            := varFieldName
+               || ' is already exist in Flexcube.You cannot use this Ext_Ref_No because it is unique.' ;
+      varWhereClause VARCHAR2 (1000)
+            :=    varTableName
+               || ' where '
+               || varFieldName
+               || ' is not NULL AND '
+               || varFieldName
+               || ' IN (SELECT EXT_REF_NO FROM STTMS_CUSTOMER)' ;
+   BEGIN
+      SP_GENERATE_STATEMENT (varTableName,
+                             varFieldName,
+                             varConstraintName,
+                             varErrorMessage,
+                             varWhereClause,
+                             varAccountNo);
+   END SP_EXT_REF_IS_IN_FCC;
+
+
+   PROCEDURE SP_VERIFY_REC_KEY (varTableName   IN VARCHAR2,
+                                varFieldName   IN VARCHAR2,
+                                varAccountNo   IN VARCHAR2)
+   IS
+      varConstraintName   VARCHAR2 (40) := 'Invalid Rec_Key';
+
+      varErrorMessage VARCHAR2 (200)
+            := 'The REC_KEY in Cstm_Function_UserDef_Fields must be valid customer no against function id STDCIF. The customer no must be exist in Sttm_upload_Customer.' ;
+      varWhereClause VARCHAR2 (1000)
+            :=    varTableName
+               || ' where '
+               || varFieldName
+               || ' is not NULL AND FUNCTION_ID = ''STDCIF'' AND '
+               || varFieldName
+               || ' NOT IN (SELECT CUSTOMER_NO||''~'' FROM STTMF_UPLOAD_CUSTOMER)' ;
+   BEGIN
+      SP_GENERATE_STATEMENT (varTableName,
+                             varFieldName,
+                             varConstraintName,
+                             varErrorMessage,
+                             varWhereClause,
+                             varAccountNo);
+   END SP_VERIFY_REC_KEY;
+
+
+   --Misc Pre-Checks - Address
+   PROCEDURE SP_MISC_ADDRESS_PRECHECKS (varTableName      IN VARCHAR2,
+                                        varAddressLine2   IN VARCHAR2,
+                                        varAddressLine3   IN VARCHAR2,
+                                        varAccountNo      IN VARCHAR2)
+   IS
+      varConstraintName   VARCHAR2 (40) := 'Miscellaneous - Address';
+
+      varErrorMessage VARCHAR2 (500)
+            :=    varAddressLine3
+               || ' should not contain value if '
+               || varAddressLine2
+               || ' is empty' ;
+      varWhereClause      VARCHAR2 (1000);
+   BEGIN
+      varWhereClause :=
+            varTableName
+         || ' where '
+         || varAddressLine2
+         || ' is null and '
+         || varAddressLine3
+         || ' is not null';
+
+      SP_GENERATE_STATEMENT (varTableName,
+                             varAddressLine3,
+                             varConstraintName,
+                             varErrorMessage,
+                             varWhereClause,
+                             varAccountNo);
+   END SP_MISC_ADDRESS_PRECHECKS;
+
+   --Misc Pre-Checks - Equality
+   PROCEDURE SP_MISC_EQUALITY_PRECHECKS (varTableName           IN VARCHAR2,
+                                         varFieldName           IN VARCHAR2,
+                                         varFieldToBeCompared   IN VARCHAR2,
+                                         varAccountNo           IN VARCHAR2)
+   IS
+      varConstraintName   VARCHAR2 (40) := 'Miscellaneous - Equality';
+
+      varErrorMessage VARCHAR2 (500)
+            := varFieldToBeCompared || ' should be equal to ' || varFieldName ;
+      varWhereClause      VARCHAR2 (1000);
+   BEGIN
+      varWhereClause :=
+            varTableName
+         || ' where '
+         || varFieldName
+         || ' <> '
+         || varFieldToBeCompared;
+
+      SP_GENERATE_STATEMENT (varTableName,
+                             varFieldToBeCompared,
+                             varConstraintName,
+                             varErrorMessage,
+                             varWhereClause,
+                             varAccountNo);
+   END SP_MISC_EQUALITY_PRECHECKS;
+
+   --Misc Pre-Checks - Customer Type
+   PROCEDURE SP_MISC_CUSTTYPE_PRECHECKS (
+      varTableName               IN VARCHAR2,
+      varCustomerTypeFieldName   IN VARCHAR2,
+      varOtherFieldName          IN VARCHAR2,
+      varAccountNo               IN VARCHAR2
+   )
+   IS
+      varConstraintName   VARCHAR2 (40) := 'Miscellaneous - Customer Type';
+
+      varErrorMessage     VARCHAR2 (500);
+      varWhereClause      VARCHAR2 (1000);
+   BEGIN
+      IF varOtherFieldName = 'SWIFT_CODE'
+      THEN
+         varWhereClause :=
+               varTableName
+            || ' where '
+            || varCustomerTypeFieldName
+            || ' = ''B'' and (LENGTH('
+            || varOtherFieldName
+            || ') < 8 or LENGTH('
+            || varOtherFieldName
+            || ') > 11))';
+         varErrorMessage :=
+            varOtherFieldName
+            || ' is mandatory for bank customers and its lenght should be between 8 and 11 characters';
+      ELSIF varOtherFieldName = 'SSN'
+      THEN
+         varWhereClause :=
+               varTableName
+            || ' where ('
+            || varCustomerTypeFieldName
+            || ' = ''B'' or '
+            || varCustomerTypeFieldName
+            || ' = ''C'')
+                and '
+            || varOtherFieldName
+            || ' is not null';
+         varErrorMessage :=
+            varOtherFieldName
+            || ' should be null for bank and corporate customers';
+      ELSIF varOtherFieldName = 'CNIC_EXPIRY_DATE'
+      THEN
+         varWhereClause :=
+               varTableName
+            || ' where ('
+            || varCustomerTypeFieldName
+            || ' = ''I'''
+            || ' )
+                and '
+            || varOtherFieldName
+            || ' is null';
+         varErrorMessage :=
+            varOtherFieldName
+            || ' must be given for Individual Type customer.';
+      END IF;
+
+      SP_GENERATE_STATEMENT (varTableName,
+                             varOtherFieldName,
+                             varConstraintName,
+                             varErrorMessage,
+                             varWhereClause,
+                             varAccountNo);
+   END SP_MISC_CUSTTYPE_PRECHECKS;
+
+   --Misc Pre-Checks - Date
+   PROCEDURE SP_MISC_DATE_PRECHECKS (varTableName           IN VARCHAR2,
+                                     varFieldName           IN VARCHAR2,
+                                     varFieldToBeCompared   IN VARCHAR2,
+                                     varAccountNo           IN VARCHAR2)
+   IS
+      varConstraintName   VARCHAR2 (40) := 'Miscellaneous - Date';
+
+      varErrorMessage     VARCHAR2 (500);
+      varWhereClause      VARCHAR2 (1000);
+   BEGIN
+      IF varFieldName = 'DATE_OF_BIRTH'
+      THEN
+         varWhereClause :=
+               varTableName
+            || ' where '
+            || varFieldName
+            || ' > '
+            || varFieldToBeCompared;
+         varErrorMessage :=
+            varFieldName || ' should be less than ' || varFieldToBeCompared;
+      ELSIF varFieldName = 'PPT_EXP_DATE'
+      THEN
+         varWhereClause :=
+               varTableName
+            || ' where '
+            || varFieldName
+            || ' < '
+            || varFieldToBeCompared;
+         varErrorMessage := '**** '
+            ||   varFieldName
+            || ' should be greater than '
+            || varFieldToBeCompared;
+      ELSIF varFieldName = 'INCORP_DATE'--added by moin
+      THEN
+         varWhereClause :=
+               varTableName
+            || ' where '
+            || varFieldName
+            || ' > '
+            || varFieldToBeCompared;
+         varErrorMessage := '**** '
+            ||   varFieldName
+            || ' should be less than '
+            || varFieldToBeCompared;
+      ELSIF varFieldName = 'PPT_ISS_DATE'   --added by moin
+      THEN
+         varWhereClause :=
+               varTableName
+            || ' where '
+            || varFieldName
+            || ' = '
+            || varFieldToBeCompared;
+         varErrorMessage := '**** '
+            ||   varFieldName
+            || ' should not be equal to '
+            || varFieldToBeCompared;
+      ELSIF varFieldName = 'CNIC_EXPIRY_DATE'
+      THEN
+         varWhereClause :=
+               varTableName
+            || ' where  CNIC_EXPIRY_DATE IS NOT NULL AND '
+            || varFieldName
+            || ' < '
+            || varFieldToBeCompared;
+         varErrorMessage := '**** '
+            ||   varFieldName
+            || ' should be greater than '
+            || varFieldToBeCompared;
+      END IF;
+
+      SP_GENERATE_STATEMENT (varTableName,
+                             varFieldName,
+                             varConstraintName,
+                             varErrorMessage,
+                             varWhereClause,
+                             varAccountNo);
+   END SP_MISC_DATE_PRECHECKS;
+
+   --Misc Pre-Checks - Dependent Not Null
+   PROCEDURE SP_MISC_DEPENDENT_PRECHECKS (
+      varTableName             IN VARCHAR2,
+      varFieldName             IN VARCHAR2,
+      varDependentFieldName1   IN VARCHAR2,
+      varDependentFieldName2   IN VARCHAR2,
+      varAccountNo             IN VARCHAR2
+   )
+   IS
+      varConstraintName   VARCHAR2 (40) := 'Miscellaneous - Checks';
+
+      varErrorMessage     VARCHAR2 (500);
+      varWhereClause      VARCHAR2 (1000);
+   BEGIN
+      IF varFieldName = 'MINOR'
+      THEN
+         IF varDependentFieldName1 = 'LEGAL_GUARDIAN'
+         THEN
+            varWhereClause :=
+                  varTableName
+               || ' where '
+               || varFieldName
+               || ' = ''Y'' and '
+               || varDependentFieldName1
+               || ' is null';
+            varErrorMessage :=
+               varDependentFieldName1 || ' is mandatory for minors';
+         ELSIF varDependentFieldName1 = 'DATE_OF_BIRTH'
+         THEN
+            varWhereClause :=
+                  varTableName
+               || ' where ('
+--               || varFieldName
+--               || ' = ''Y'' and '
+--               || varDependentFieldName1
+--               || ' <= Add_Months(GLOBAL.APPLICATION_DATE('
+--               || varBranchField
+--               || ') , - (18 * 12)) )'
+--               || ' or 
+               
+               || varFieldName
+               || ' = ''N'' and '
+               || varDependentFieldName1
+               || ' > Add_Months(GLOBAL.APPLICATION_DATE('
+               || varBranchField
+               || ') , - (18 * 12)) )';
+            varErrorMessage :=
+                  '**** Values of '
+               || varFieldName
+               || ' and '
+               || varDependentFieldName1
+               || ' are conflicting';
+         END IF;
+      ELSIF varFieldName = 'P_NATIONAL_ID'
+      THEN
+         varWhereClause :=
+               varTableName
+            || ' where '
+            || varFieldName
+            || ' <> ''PK'' and '
+            || varDependentFieldName1
+            || ' is null';
+         varErrorMessage :=
+            varDependentFieldName1 || ' is mandatory for foreigners';
+      ELSIF varFieldName = 'PASSPORT_NO'
+      THEN
+         varWhereClause :=
+            varTableName
+            || ' where ((TRIM(both '''' from passport_no)) is null and (ppt_iss_date is not null or ppt_exp_date is not null)) OR ((ppt_iss_date is null or ppt_exp_date is null) and (TRIM(both '''' from passport_no)) is not null) OR (passport_no is not null and (ppt_exp_date is null or ppt_iss_date is null)) OR ((ppt_iss_date is not null or ppt_exp_date is not null) and passport_no is null)';
+         varErrorMessage :=
+               varDependentFieldName1
+            || ' and '
+            || varDependentFieldName2
+            || ' are mandatory only if '
+            || varFieldName
+            || ' is provided';
+      ELSIF varFieldName = 'UNIQUE_ID_VALUE'
+      THEN
+         varWhereClause :=
+               varTableName
+            || ' where ('
+            || varFieldName
+            || ' is null and '
+            || varDependentFieldName1
+            || ' is not null) or 
+                ('
+            || varFieldName
+            || ' is not null and '
+            || varDependentFieldName1
+            || ' is null)';
+         varErrorMessage :=
+               varFieldName
+            || ' is mandatory if '
+            || varDependentFieldName1
+            || ' is provided';
+      END IF;
+
+      SP_GENERATE_STATEMENT (varTableName,
+                             varDependentFieldName1,
+                             varConstraintName,
+                             varErrorMessage,
+                             varWhereClause,
+                             varAccountNo);
+   END SP_MISC_DEPENDENT_PRECHECKS;
+
+   --Misc Pre-Checks - Invalid Records
+   PROCEDURE SP_MISC_EXTRA_PRECHECKS (varTableName        IN VARCHAR2,
+                                      varInnerTableName   IN VARCHAR2,
+                                      varAccountNo        IN VARCHAR2)
+   IS
+      varConstraintName   VARCHAR2 (40) := 'Miscellaneous - Invalid Records';
+      varErrorMessage VARCHAR2 (500)
+            := 'Record does not exist in master table, ' || varInnerTableName ;
+      varWhereClause VARCHAR2 (1000)
+            :=    varTableName
+               || ' where '
+               || varIdentityNo
+               || ' not in (select '
+               || varIdentityNo
+               || ' from '
+               || varInnerTableName
+               || ')' ;
+   BEGIN
+      SP_GENERATE_STATEMENT (varTableName,
+                             varIdentityNo,
+                             varConstraintName,
+                             varErrorMessage,
+                             varWhereClause,
+                             varAccountNo);
+   END SP_MISC_EXTRA_PRECHECKS;
+
+   --Misc Pre-Checks - Invalid Records
+   PROCEDURE SP_MISC_INVALID_PRECHECKS (
+      varTableName               IN VARCHAR2,
+      varCustomerTypeFieldName   IN VARCHAR2,
+      varInnerTableName          IN VARCHAR2,
+      varAccountNo               IN VARCHAR2
+   )
+   IS
+      varConstraintName   VARCHAR2 (40) := 'Miscellaneous - Invalid Records';
+      varErrorMessage     VARCHAR2 (500);
+      varWhereClause      VARCHAR2 (1000);
+   BEGIN
+      IF varInnerTableName = 'STTMF_UPLOAD_CUST_PERSONAL'
+      THEN
+         varWhereClause :=
+               varTableName
+            || ' where ('
+            || varCustomerTypeFieldName
+            || ' = ''B'' or '
+            || varCustomerTypeFieldName
+            || ' = ''C'') and ('
+            || varIdentityNo
+            || ' in (select '
+            || varIdentityNo
+            || ' from '
+            || varInnerTableName
+            || '))';
+         varErrorMessage :=
+            varInnerTableName
+            || ' should not contain bank and corporate customer records';
+      ELSIF varInnerTableName = 'STTMF_UPLOAD_CUST_PROFESSIONAL'
+      THEN
+         varWhereClause :=
+               varTableName
+            || ' where ('
+            || varCustomerTypeFieldName
+            || ' = ''B'' or '
+            || varCustomerTypeFieldName
+            || ' = ''C'') and ('
+            || varIdentityNo
+            || ' in (select '
+            || varIdentityNo
+            || ' from '
+            || varInnerTableName
+            || '))';
+         varErrorMessage :=
+            varInnerTableName
+            || ' should not contain bank and corporate customer records';
+      ELSIF varInnerTableName = 'STTMF_UPLOAD_CUST_CORPORATE'
+      THEN
+         varWhereClause :=
+               varTableName
+            || ' where ('
+            || varCustomerTypeFieldName
+            || ' = ''I'') and ('
+            || varIdentityNo
+            || ' in (select '
+            || varIdentityNo
+            || ' from '
+            || varInnerTableName
+            || '))';
+         varErrorMessage :=
+            varInnerTableName
+            || ' should not contain individual customer records';
+      END IF;
+
+      SP_GENERATE_STATEMENT (varTableName,
+                             varCustomerTypeFieldName,
+                             varConstraintName,
+                             varErrorMessage,
+                             varWhereClause,
+                             varAccountNo);
+   END SP_MISC_INVALID_PRECHECKS;
+
+
+   PROCEDURE SP_DELETE_PASSPORT_ENTRIES
+   IS
+   BEGIN
+      DELETE FROM   REJECTION
+            WHERE   SOURCE_CODE = 'CIF' AND FIELD_NAME = 'PPT_EXP_DATE'
+                    AND ERROR_MESSAGE =
+                          'PPT_EXP_DATE and PPT_ISS_DATE are mandatory only if PASSPORT_NO is provided'
+                    AND IDENTITY_NO IN
+                             (SELECT   DISTINCT (customer_no)
+                                FROM   sttmf_upload_cust_personal
+                               WHERE   customer_no IN
+                                             (SELECT   customer_no
+                                                FROM   sttmf_upload_cust_personal
+                                               WHERE   ( (TRIM (
+                                                             BOTH '' FROM passport_no
+                                                          )) IS NULL
+                                                        AND (ppt_iss_date IS NOT NULL
+                                                             OR ppt_exp_date IS NOT NULL))
+                                                       OR ( (ppt_iss_date IS NULL
+                                                             OR ppt_exp_date IS NULL)
+                                                           AND (TRIM (
+                                                                   BOTH '' FROM passport_no
+                                                                )) IS NOT NULL))
+                                       AND passport_no IS NOT NULL
+                                       AND ppt_exp_date IS NOT NULL
+                                       AND ppt_iss_date IS NOT NULL);
+   END SP_DELETE_PASSPORT_ENTRIES;
+
+
+   --Pre-Checks for Misc
+   PROCEDURE SP_MISC_PRECHECKS
+   IS
+      varTableName   VARCHAR2 (40);
+      varAccountNo   VARCHAR2 (40);
+   BEGIN
+      varIdentityNo := 'CUSTOMER_NO';
+
+      varTableName := 'STTMF_UPLOAD_CUSTOMER';
+      varBranchField := 'LOCAL_BRANCH';
+      varAccountNo := 'EXT_REF_NO';
+      SP_MISC_ADDRESS_PRECHECKS (varTableName,
+                                 'ADDRESS_LINE2',
+                                 'ADDRESS_LINE3',
+                                 varAccountNo);
+      SP_MISC_EQUALITY_PRECHECKS (varTableName,
+                                  'CUSTOMER_NO',
+                                  'LIABILITY_NO',
+                                  varAccountNo);
+--      SP_MISC_CUSTTYPE_PRECHECKS (varTableName,'CUSTOMER_TYPE','SWIFT_CODE',varAccountNo);    --commented by Zarq
+      
+      SP_MISC_CUSTTYPE_PRECHECKS (varTableName,
+                                  'CUSTOMER_TYPE',
+                                  'SSN',
+                                  varAccountNo);
+      -- SP_MISC_CUSTTYPE_PRECHECKS(varTableName, 'CUSTOMER_TYPE', 'CNIC_EXPIRY_DATE', varAccountNo);
+      -- Comment out by ZARQ for BOP
+--      SP_MISC_DATE_PRECHECKS ( 
+--         varTableName,
+--         'CNIC_EXPIRY_DATE',
+--         'GLOBAL.APPLICATION_DATE(' || varBranchField || ')',
+--         varAccountNo
+--      );
+      SP_MISC_INVALID_PRECHECKS (varTableName,
+                                 'CUSTOMER_TYPE',
+                                 'STTMF_UPLOAD_CUST_CORPORATE',
+                                 varAccountNo);
+      --SP_MISC_INVALID_PRECHECKS(varTableName, 'CUSTOMER_TYPE', 'STTMF_UPLOAD_CUST_PERSONAL', varAccountNo);
+      SP_MISC_INVALID_PRECHECKS (varTableName,
+                                 'CUSTOMER_TYPE',
+                                 'STTMF_UPLOAD_CUST_PROFESSIONAL',
+                                 varAccountNo);
+      SP_MISC_DEPENDENT_PRECHECKS (varTableName,
+                                   'UNIQUE_ID_VALUE',
+                                   'UNIQUE_ID_NAME',
+                                   '',
+                                   varAccountNo);
+       
+     
+
+      varTableName := 'STTMF_UPLOAD_CUST_PROFESSIONAL';
+      varBranchField := 'BRANCH_CODE';
+      varAccountNo := '';
+      SP_MISC_EXTRA_PRECHECKS (varTableName,
+                               'STTMF_UPLOAD_CUSTOMER',
+                               varAccountNo);
+
+      varTableName := 'STTMF_UPLOAD_CUST_CORPORATE';
+      varBranchField := 'BRANCH_CODE';
+      varAccountNo := 'ERR_MSG';
+      SP_MISC_ADDRESS_PRECHECKS (varTableName,
+                                 'R_ADDRESS2',
+                                 'R_ADDRESS3',
+                                 varAccountNo);
+      SP_MISC_EXTRA_PRECHECKS (varTableName,
+                               'STTMF_UPLOAD_CUSTOMER',
+                               varAccountNo);
+--    Added by moin      
+      SP_MISC_DATE_PRECHECKS (varTableName, 
+                               'INCORP_DATE', 
+                               'GLOBAL.APPLICATION_DATE(' || varBranchField || ')'                               
+                               ,varAccountNo);                               
+
+      varTableName := 'STTMF_UPLOAD_CUST_PERSONAL';
+      varBranchField := 'BRANCH_CODE';
+      varAccountNo := 'MIDDLE_NAME';
+      SP_MISC_ADDRESS_PRECHECKS (varTableName,
+                                 'D_ADDRESS1',
+                                 'D_ADDRESS2',
+                                 varAccountNo);
+      SP_MISC_ADDRESS_PRECHECKS (varTableName,
+                                 'D_ADDRESS2',
+                                 'D_ADDRESS3',
+                                 varAccountNo);
+      SP_MISC_ADDRESS_PRECHECKS (varTableName,
+                                 'P_ADDRESS1',
+                                 'P_ADDRESS2',
+                                 varAccountNo);
+      SP_MISC_ADDRESS_PRECHECKS (varTableName,
+                                 'P_ADDRESS2',
+                                 'P_ADDRESS3',
+                                 varAccountNo);
+      SP_MISC_DATE_PRECHECKS (varTableName,
+                              'PPT_EXP_DATE',
+                              'PPT_ISS_DATE',
+                              varAccountNo);
+--    Added by moin      
+      SP_MISC_DATE_PRECHECKS (varTableName, 
+                               'PPT_ISS_DATE', 
+                               'GLOBAL.APPLICATION_DATE(' || varBranchField || ')'                               
+                               ,varAccountNo);                                
+      SP_MISC_DATE_PRECHECKS (varTableName, 'PPT_EXP_DATE', 'GLOBAL.APPLICATION_DATE(' || varBranchField || ')',varAccountNo);
+
+      SP_MISC_DATE_PRECHECKS (
+         varTableName,
+         'DATE_OF_BIRTH',
+         'GLOBAL.APPLICATION_DATE(' || varBranchField || ')',
+         varAccountNo
+      );
+      SP_MISC_DEPENDENT_PRECHECKS (varTableName,
+                                   'MINOR',
+                                   'LEGAL_GUARDIAN',
+                                   '',
+                                   varAccountNo);
+      SP_MISC_DEPENDENT_PRECHECKS (varTableName,
+                                   'MINOR',
+                                   'DATE_OF_BIRTH',
+                                   '',
+                                   varAccountNo);
+--      SP_MISC_DEPENDENT_PRECHECKS (varTableName,
+--                                   'P_NATIONAL_ID',
+--                                   'PASSPORT_NO',
+--                                   '',
+--                                   varAccountNo); -- COMMENTED BY ZARQ FOR BOP
+      SP_MISC_DEPENDENT_PRECHECKS (varTableName,
+                                   'PASSPORT_NO',
+                                   'PPT_EXP_DATE',
+                                   'PPT_ISS_DATE',
+                                   varAccountNo);
+      SP_MISC_EXTRA_PRECHECKS (varTableName,
+                               'STTMF_UPLOAD_CUSTOMER',
+                               varAccountNo);
+
+
+      -- Delete passport no entries from rejection table which are valid.
+      SP_DELETE_PASSPORT_ENTRIES;
+   END SP_MISC_PRECHECKS;
+
+
+   --Pre-Checks for STTM_UPLOAD_CUSTOMER
+   PROCEDURE SP_STTM_UPLOAD_CUSTOMER
+   IS
+      varTableName   VARCHAR2 (40) := 'STTMF_UPLOAD_CUSTOMER';
+      varAccountNo   VARCHAR2 (40) := 'EXT_REF_NO';
+      varFieldName   VARCHAR2 (40);
+   BEGIN
+      varBranchField := 'LOCAL_BRANCH';
+
+      --CUSTOMER_NO is the base condition and should be mandatory
+      varFieldName := 'CUSTOMER_NO';
+      SP_MANDATORY_PRECHECKS (varTableName, varFieldName, varAccountNo);
+      SP_REGEX_PRECHECKS (varTableName, varFieldName, varAccountNo);
+      SP_MASK_PRECHECKS (varTableName, varFieldName, varAccountNo);
+      SP_UNIQUE_PRECHECKS (varTableName, varFieldName, varAccountNo);
+      SP_UNIQUE_BANK_WISE (varTableName, varFieldName, varAccountNo);
+      --0911 temp SP_CUST_NO_IS_IN_FCC (varTableName, varFieldName, varAccountNo);
+
+      varFieldName := 'CUSTOMER_TYPE';
+      SP_MANDATORY_PRECHECKS (varTableName, varFieldName, varAccountNo);
+      SP_POSSIBLE_VALUES_PRECHECKS (varTableName, varFieldName, varAccountNo);
+      SP_VERIFY_CORP_CUSTOMER(varTableName, varFieldName, varAccountNo);-- Added By ZARQ 11/12/2015 --
+
+      varFieldName := 'CUSTOMER_NAME1';
+      SP_MANDATORY_PRECHECKS (varTableName, varFieldName, varAccountNo);
+      SP_REGEX_PRECHECKS (varTableName, varFieldName, varAccountNo);
+      SP_MASK_PRECHECKS (varTableName, varFieldName, varAccountNo);
+
+      varFieldName := 'ADDRESS_LINE1';
+      SP_MANDATORY_PRECHECKS (varTableName, varFieldName, varAccountNo);
+      SP_REGEX_PRECHECKS (varTableName, varFieldName, varAccountNo);
+
+      varFieldName := 'ADDRESS_LINE2';
+      SP_REGEX_PRECHECKS (varTableName, varFieldName, varAccountNo);
+
+      varFieldName := 'COUNTRY';
+      SP_MANDATORY_PRECHECKS (varTableName, varFieldName, varAccountNo);
+      SP_LOOKUP_PRECHECKS (varTableName,
+                           varFieldName,
+                           varAccountNo,
+                           'STTMS_COUNTRY',
+                           'COUNTRY_CODE',
+                           0);
+
+      varFieldName := 'SHORT_NAME';
+      SP_MANDATORY_PRECHECKS (varTableName, varFieldName, varAccountNo);
+      SP_REGEX_PRECHECKS (varTableName, varFieldName, varAccountNo);
+      SP_UNIQUE_PRECHECKS (varTableName, varFieldName, varAccountNo);
+     --0911 temp SP_SHORT_NAME_IS_IN_FCC (varTableName, varFieldName, varAccountNo);
+
+
+      varFieldName := 'NATIONALITY';
+      SP_MANDATORY_PRECHECKS (varTableName, varFieldName, varAccountNo);
+      SP_LOOKUP_PRECHECKS (varTableName,
+                           varFieldName,
+                           varAccountNo,
+                           'STTMS_COUNTRY',
+                           'COUNTRY_CODE',
+                           0);
+
+      varFieldName := 'LANGUAGE';
+      SP_MANDATORY_PRECHECKS (varTableName, varFieldName, varAccountNo);
+      SP_LOOKUP_PRECHECKS (varTableName,
+                           varFieldName,
+                           varAccountNo,
+                           'SMTBS_LANGUAGE',
+                           'LANG_CODE',
+                           0);
+
+      varFieldName := 'EXPOSURE_COUNTRY';
+      SP_LOOKUP_PRECHECKS (varTableName,
+                           varFieldName,
+                           varAccountNo,
+                           'STTMS_COUNTRY',
+                           'COUNTRY_CODE',
+                           0);
+
+      varFieldName := 'LOCAL_BRANCH';
+      SP_MANDATORY_PRECHECKS (varTableName, varFieldName, varAccountNo);
+      SP_LOOKUP_PRECHECKS (varTableName,
+                           varFieldName,
+                           varAccountNo,
+                           'STTMS_BRANCH',
+                           'BRANCH_CODE',
+                           0);
+      SP_MASK_PRECHECKS (varTableName, varFieldName, varAccountNo);
+
+      varFieldName := 'LIABILITY_NO'; -- ADDED by Zarq for BOP AS Auto Liability is requiered 
+      SP_MANDATORY_PRECHECKS (varTableName, varFieldName, varAccountNo);
+      SP_LIAB_LOOKUP_PRECHECKS (varTableName, varFieldName, varAccountNo, 'STTMF_AUTO_LIAB_UPLOAD', 'LIAB_NO');
+
+      varFieldName := 'UNIQUE_ID_NAME';
+      --SP_MANDATORY_PRECHECKS (varTableName, varFieldName, varAccountNo);
+      SP_POSSIBLE_VALUES_PRECHECKS (varTableName, varFieldName, varAccountNo);
+
+      varFieldName := 'UNIQUE_ID_VALUE';
+      --SP_MANDATORY_PRECHECKS (varTableName, varFieldName, varAccountNo);
+      SP_UNIQUE_PRECHECKS (varTableName, varFieldName, varAccountNo);
+      SP_CNIC_EXIST (varTableName, varFieldName, varAccountNo); --uncommented by Zarq for BOP
+      SP_UNIQUE_BANK_WISE (varTableName, varFieldName, varAccountNo);
+      
+
+      varFieldName := 'FROZEN';
+      SP_POSSIBLE_VALUES_PRECHECKS (varTableName, varFieldName, varAccountNo);
+
+      varFieldName := 'DECEASED';
+      SP_POSSIBLE_VALUES_PRECHECKS (varTableName, varFieldName, varAccountNo);
+
+      varFieldName := 'WHEREABOUTS_UNKNOWN';
+      SP_POSSIBLE_VALUES_PRECHECKS (varTableName, varFieldName, varAccountNo);
+
+      varFieldName := 'CUSTOMER_CATEGORY';
+      SP_MANDATORY_PRECHECKS (varTableName, varFieldName, varAccountNo);
+      SP_LOOKUP_PRECHECKS (varTableName,
+                           varFieldName,
+                           varAccountNo,
+                           'STTMS_CUSTOMER_CAT',
+                           'CUST_CAT',
+                           1);
+      SP_VALIDATE_CUST_CAT (varTableName, varFieldName, varAccountNo);
+
+      /*    varFieldName := 'OVERALL_LIMIT';
+          SP_MANDATORY_PRECHECKS (varTableName, varFieldName, varAccountNo);  */
+
+      varFieldName := 'LIMIT_CCY';
+      SP_LOOKUP_PRECHECKS (varTableName,
+                           varFieldName,
+                           varAccountNo,
+                           'CYTMS_CCY_DEFN',
+                           'CCY_CODE',
+                           0);
+
+      varFieldName := 'CAS_CUST';
+      SP_POSSIBLE_VALUES_PRECHECKS (varTableName, varFieldName, varAccountNo);
+
+      varFieldName := 'LIAB_BR';
+      SP_MANDATORY_PRECHECKS (varTableName, varFieldName, varAccountNo); 
+      SP_LOOKUP_PRECHECKS (varTableName,
+                           varFieldName,
+                           varAccountNo,
+                           'STTMS_BRANCH',
+                           'BRANCH_CODE',
+                           0);
+
+      varFieldName := 'PAST_DUE_FLAG';
+      SP_POSSIBLE_VALUES_PRECHECKS (varTableName, varFieldName, varAccountNo);
+
+      varFieldName := 'DEFAULT_MEDIA';
+      SP_LOOKUP_PRECHECKS (varTableName,
+                           varFieldName,
+                           varAccountNo,
+                           'MSTMS_MEDIA',
+                           'MEDIA',
+                           0);
+
+      varFieldName := 'LOC_CODE';
+      SP_MANDATORY_PRECHECKS (varTableName, varFieldName, varAccountNo);
+      SP_LOOKUP_PRECHECKS (varTableName,
+                           varFieldName,
+                           varAccountNo,
+                           'STTMS_LOCATION',
+                           'LOC_CODE',
+                           0);
+
+      varFieldName := 'SHORT_NAME2';
+      SP_REGEX_PRECHECKS (varTableName, varFieldName, varAccountNo);
+
+      varFieldName := 'ACTION_CODE';
+      SP_POSSIBLE_VALUES_PRECHECKS (varTableName, varFieldName, varAccountNo);
+
+      varFieldName := 'MAILERS_REQUIRED';
+      SP_POSSIBLE_VALUES_PRECHECKS (varTableName, varFieldName, varAccountNo);
+
+      varFieldName := 'AML_CUSTOMER_GRP';
+      SP_LOOKUP_PRECHECKS (varTableName,
+                           varFieldName,
+                           varAccountNo,
+                           'CSTMS_AML_CUSTOMER_GRP_MASTER',
+                           'CUSTOMER_GRP',
+                           0);
+
+      varFieldName := 'GROUP_CODE';
+      SP_LOOKUP_PRECHECKS (varTableName,
+                           varFieldName,
+                           varAccountNo,
+                           'STTMS_GROUP_CODE',
+                           'GROUP_CODE',
+                           0);
+
+      varFieldName := 'EXPOSURE_CATEGORY';
+      SP_LOOKUP_PRECHECKS (varTableName,
+                           varFieldName,
+                           varAccountNo,
+                           'STTMS_EXPOSURE_CATEGORY',
+                           'EXPOSURE_CATEGORY',
+                           0);
+
+      varFieldName := 'CUST_UNADVISED';
+      SP_POSSIBLE_VALUES_PRECHECKS (varTableName, varFieldName, varAccountNo);
+
+      varFieldName := 'LIAB_UNADVISED';
+      SP_POSSIBLE_VALUES_PRECHECKS (varTableName, varFieldName, varAccountNo);
+
+      varFieldName := 'TAX_GROUP';
+      SP_LOOKUP_PRECHECKS (varTableName,
+                           varFieldName,
+                           varAccountNo,
+                           'STTMS_GROUP_CODE',
+                           'GROUP_CODE',
+                           0);
+
+      varFieldName := 'CONSOL_TAX_CERT_REQD';
+      SP_POSSIBLE_VALUES_PRECHECKS (varTableName, varFieldName, varAccountNo);
+
+      varFieldName := 'ELCM_CUSTOMER';
+      SP_POSSIBLE_VALUES_PRECHECKS (varTableName, varFieldName, varAccountNo);-- ADDED 2/3/15
+      
+      varFieldName := 'INDIVIDUAL_TAX_CERT_REQD';
+      SP_POSSIBLE_VALUES_PRECHECKS (varTableName, varFieldName, varAccountNo);
+
+      varFieldName := 'RISK_CATEGORY';
+      SP_LOOKUP_PRECHECKS (varTableName,
+                           varFieldName,
+                           varAccountNo,
+                           'STTMS_RISK_CATEGORY',
+                           'RISK_CATEGORY',
+                           0);
+
+      varFieldName := 'FAX_NUMBER';
+      SP_REGEX_PRECHECKS (varTableName, varFieldName, varAccountNo);
+
+      varFieldName := 'EXT_REF_NO';
+      SP_UNIQUE_PRECHECKS (varTableName, varFieldName, varAccountNo);
+      SP_EXT_REF_IS_IN_FCC (varTableName, varFieldName, varAccountNo);
+
+      varFieldName := 'CRM_CUSTOMER';
+      SP_POSSIBLE_VALUES_PRECHECKS (varTableName, varFieldName, varAccountNo);
+
+      varFieldName := 'ISSUER_CUSTOMER';
+      SP_POSSIBLE_VALUES_PRECHECKS (varTableName, varFieldName, varAccountNo);
+
+      varFieldName := 'TREASURY_CUSTOMER';
+      SP_POSSIBLE_VALUES_PRECHECKS (varTableName, varFieldName, varAccountNo);
+
+      varFieldName := 'CHARGE_GROUP';
+      SP_LOOKUP_PRECHECKS (varTableName,
+                           varFieldName,
+                           varAccountNo,
+                           'STTMS_GROUP_CODE',
+                           'GROUP_CODE',
+                           0);
+
+      varFieldName := 'FULL_NAME';
+      SP_MANDATORY_PRECHECKS (varTableName, varFieldName, varAccountNo);
+      SP_REGEX_PRECHECKS (varTableName, varFieldName, varAccountNo);
+
+      varFieldName := 'CUST_CLG_GROUP';
+      SP_LOOKUP_PRECHECKS (varTableName,
+                           varFieldName,
+                           varAccountNo,
+                           'STTMS_GROUP_CODE',
+                           'GROUP_CODE',
+                           0);
+
+      varFieldName := 'CHK_DIGIT_VALID_REQD';
+      SP_POSSIBLE_VALUES_PRECHECKS (varTableName, varFieldName, varAccountNo);
+
+      varFieldName := 'BRANCH_CODE';
+      SP_MANDATORY_PRECHECKS (varTableName, varFieldName, varAccountNo);
+      SP_LOOKUP_PRECHECKS (varTableName,
+                           varFieldName,
+                           varAccountNo,
+                           'STTMS_BRANCH',
+                           'BRANCH_CODE',
+                           0);
+
+      ---Customer Classification added dated: 27-12-12 by Imran
+      varFieldName := 'CUST_CLASSIFICATION';
+      SP_LOOKUP_CUST_CLASS (varTableName, varFieldName, varAccountNo);
+
+      ---Customer Risk Profile Null required check added date: 10-04-13 by Rumman
+      varFieldName := 'RISK_PROFILE';
+      SP_NULL_VALUES_PRECHECKS (varTableName, varFieldName, varAccountNo);
+
+      ---Customer Record required in sttmf_upload_cust_personal  check added date: 10-04-13 by Rumman
+      varFieldName := 'CUSTOMER_NO';
+      SP_CUST_NO_IS_IN_PESONAL (varTableName, varFieldName, varAccountNo);
+      
+      varFieldName := 'SHORT_NAME';         --Added by Moin
+      SP_UNIQUE_BANK_WISE (varTableName, varFieldName, varAccountNo);
+      
+      
+   END SP_STTM_UPLOAD_CUSTOMER;
+
+   --Pre-Checks for STTM_UPLOAD_CUST_PROFESSION
+   PROCEDURE SP_STTM_UPLOAD_CUST_PROFESSION
+   IS
+      varTableName   VARCHAR2 (40) := 'STTMF_UPLOAD_CUST_PROFESSIONAL';
+      varAccountNo   VARCHAR2 (40) := '';
+      varFieldName   VARCHAR2 (40);
+   BEGIN
+      varBranchField := 'BRANCH_CODE';
+
+      --CUSTOMER_NO is the base condition and should be mandatory
+      varFieldName := 'CUSTOMER_NO';
+      SP_MANDATORY_PRECHECKS (varTableName, varFieldName, varAccountNo);
+      SP_LOOKUP_PRECHECKS (varTableName,
+                           varFieldName,
+                           varAccountNo,
+                           'STTMF_UPLOAD_CUSTOMER',
+                           'CUSTOMER_NO',
+                           0);
+      SP_UNIQUE_PRECHECKS (varTableName, varFieldName, varAccountNo);
+     --0911 temp SP_CUST_NO_IS_IN_FCC (varTableName, varFieldName, varAccountNo);
+
+      varFieldName := 'EMPLOYMENT_STATUS';
+      SP_MANDATORY_PRECHECKS (varTableName, varFieldName, varAccountNo);
+      SP_POSSIBLE_VALUES_PRECHECKS (varTableName, varFieldName, varAccountNo);
+
+      varFieldName := 'EMPLOYMENT_TENURE';
+      SP_MASK_PRECHECKS (varTableName, varFieldName, varAccountNo);
+
+      varFieldName := 'RETIREMENT_AGE';
+      SP_MASK_PRECHECKS (varTableName, varFieldName, varAccountNo);
+
+      varFieldName := 'E_ADDRESS1';
+      SP_REGEX_PRECHECKS (varTableName, varFieldName, varAccountNo);
+
+      varFieldName := 'E_ADDRESS2';
+      SP_REGEX_PRECHECKS (varTableName, varFieldName, varAccountNo);
+
+      varFieldName := 'E_TELEPHONE';
+      SP_REGEX_PRECHECKS (varTableName, varFieldName, varAccountNo);
+
+      varFieldName := 'E_FAX';
+      SP_REGEX_PRECHECKS (varTableName, varFieldName, varAccountNo);
+
+      varFieldName := 'E_EMAIL';
+      SP_REGEX_PRECHECKS (varTableName, varFieldName, varAccountNo);
+
+      varFieldName := 'E_COUNTRY';
+      SP_LOOKUP_PRECHECKS (varTableName,
+                           varFieldName,
+                           varAccountNo,
+                           'STTMS_COUNTRY',
+                           'COUNTRY_CODE',
+                           0);
+
+      varFieldName := 'CCY_PERS_INCEXP';
+      SP_LOOKUP_PRECHECKS (varTableName,
+                           varFieldName,
+                           varAccountNo,
+                           'CYTMS_CCY_DEFN',
+                           'CCY_CODE',
+                           0);
+
+      varFieldName := 'BRANCH_CODE';
+      SP_MANDATORY_PRECHECKS (varTableName, varFieldName, varAccountNo);
+      SP_LOOKUP_PRECHECKS (varTableName,
+                           varFieldName,
+                           varAccountNo,
+                           'STTMS_BRANCH',
+                           'BRANCH_CODE',
+                           0);
+      SP_MASK_PRECHECKS (varTableName, varFieldName, varAccountNo);
+   END SP_STTM_UPLOAD_CUST_PROFESSION;
+
+   --Pre-Checks for STTM_UPLOAD_CUST_CORPORATE
+   PROCEDURE SP_STTM_UPLOAD_CUST_CORPORATE
+   IS
+      varTableName   VARCHAR2 (40) := 'STTMF_UPLOAD_CUST_CORPORATE';
+      varAccountNo   VARCHAR2 (40) := 'ERR_MSG';
+      varFieldName   VARCHAR2 (40);
+   BEGIN
+      varBranchField := 'BRANCH_CODE';
+
+      --CUSTOMER_NO is the base condition and should be mandatory
+      varFieldName := 'CUSTOMER_NO';
+      SP_MANDATORY_PRECHECKS (varTableName, varFieldName, varAccountNo);
+      SP_LOOKUP_PRECHECKS (varTableName,
+                           varFieldName,
+                           varAccountNo,
+                           'STTMF_UPLOAD_CUSTOMER',
+                           'CUSTOMER_NO',
+                           0);
+      SP_UNIQUE_PRECHECKS (varTableName, varFieldName, varAccountNo);
+      --0911 temp SP_CUST_NO_IS_IN_FCC (varTableName, varFieldName, varAccountNo);
+
+      varFieldName := 'CORPORATE_NAME';
+      SP_MANDATORY_PRECHECKS (varTableName, varFieldName, varAccountNo);
+      SP_REGEX_PRECHECKS (varTableName, varFieldName, varAccountNo);
+      SP_MASK_PRECHECKS (varTableName, varFieldName, varAccountNo);
+
+      varFieldName := 'C_NATIONAL_ID';
+      --SP_UNIQUE_PRECHECKS (varTableName, varFieldName, varAccountNo); -- removed by Ahmad Qureshi
+ 
+      varFieldName := 'R_ADDRESS1';
+      SP_MANDATORY_PRECHECKS (varTableName, varFieldName, varAccountNo);
+      SP_REGEX_PRECHECKS (varTableName, varFieldName, varAccountNo);
+
+      varFieldName := 'R_ADDRESS2';
+      SP_REGEX_PRECHECKS (varTableName, varFieldName, varAccountNo);
+
+      varFieldName := 'INCORP_DATE';
+      SP_MANDATORY_PRECHECKS (varTableName, varFieldName, varAccountNo);
+      SP_MASK_PRECHECKS (varTableName, varFieldName, varAccountNo);
+
+      varFieldName := 'INCORP_COUNTRY';
+      SP_LOOKUP_PRECHECKS (varTableName,
+                           varFieldName,
+                           varAccountNo,
+                           'STTMS_COUNTRY',
+                           'COUNTRY_CODE',
+                           0);
+
+      varFieldName := 'R_COUNTRY';
+      SP_LOOKUP_PRECHECKS (varTableName,
+                           varFieldName,
+                           varAccountNo,
+                           'STTMS_COUNTRY',
+                           'COUNTRY_CODE',
+                           0);
+
+      varFieldName := 'AMOUNTS_CCY';
+      SP_LOOKUP_PRECHECKS (varTableName,
+                           varFieldName,
+                           varAccountNo,
+                           'CYTMS_CCY_DEFN',
+                           'CCY_CODE',
+                           0);
+
+      varFieldName := 'BRANCH_CODE';
+      SP_MANDATORY_PRECHECKS (varTableName, varFieldName, varAccountNo);
+      SP_LOOKUP_PRECHECKS (varTableName,
+                           varFieldName,
+                           varAccountNo,
+                           'STTMS_BRANCH',
+                           'BRANCH_CODE',
+                           0);
+      SP_MASK_PRECHECKS (varTableName, varFieldName, varAccountNo);
+   END SP_STTM_UPLOAD_CUST_CORPORATE;
+
+   --Pre-Checks for STTM_UPLOAD_CUST_PERSONAL
+   PROCEDURE SP_STTM_UPLOAD_CUST_PERSONAL
+   IS
+      varTableName   VARCHAR2 (40) := 'STTMF_UPLOAD_CUST_PERSONAL';
+      varAccountNo   VARCHAR2 (40) := 'CUSTOMER_NO';--'MIDDLE_NAME';
+      varFieldName   VARCHAR2 (40);
+   BEGIN
+      varBranchField := 'BRANCH_CODE';
+
+      varFieldName := 'CUSTOMER_PREFIX';
+      SP_MANDATORY_PRECHECKS2 (varTableName, varFieldName, varAccountNo); --ADDED BY MOIN FOR BOP
+      SP_CHECK_PERSONAL_CORP (varTableName, varFieldName, varAccountNo);    --ADDED BY MOIN FOR BOP
+      SP_LOOKUP_PRE_CHECKS2 (varTableName,
+                             varFieldName,
+                             varAccountNo,
+                             'STTMS_CUST_PREFIX_DETAILS',
+                             'PREFIX1');
+
+      varFieldName := 'FIRST_NAME';
+      SP_REGEX_PRECHECKS (varTableName, varFieldName, varAccountNo);
+
+      varFieldName := 'MIDDLE_NAME';
+      SP_REGEX_PRECHECKS (varTableName, varFieldName, varAccountNo);
+
+      varFieldName := 'LAST_NAME';
+      SP_REGEX_PRECHECKS (varTableName, varFieldName, varAccountNo);
+
+      varFieldName := 'DATE_OF_BIRTH';
+      SP_MANDATORY_PRECHECKS2(varTableName, varFieldName, varAccountNo);    --ADDED BY MOIN FOR BOP
+      SP_CHECK_PERSONAL_CORP(varTableName, varFieldName, varAccountNo);    --ADDED BY MOIN FOR BOP
+
+      varFieldName := 'MINOR';
+      SP_POSSIBLE_VALUES_PRECHECKS (varTableName, varFieldName, varAccountNo);
+
+      varFieldName := 'SEX';
+      SP_MANDATORY_PRECHECKS2 (varTableName, varFieldName, varAccountNo);   --ADDED BY MOIN FOR BOP
+      SP_CHECK_PERSONAL_CORP(varTableName, varFieldName, varAccountNo);    --ADDED BY MOIN FOR BOP
+      SP_POSSIBLE_VALUES_PRECHECKS (varTableName, varFieldName, varAccountNo);
+
+      varFieldName := 'P_NATIONAL_ID';
+--      SP_LOOKUP_PRECHECKS (varTableName,
+--                           varFieldName,
+--                           varAccountNo,
+--                           'STTMS_COUNTRY',
+--                           'COUNTRY_CODE',
+--                           0);        --COMMENTED BY ZARQ FOR BOP
+      SP_CORP_NATIONAL_ID_PRECHECKS (varTableName, varFieldName, varAccountNo); --Added by Moin
+
+      varFieldName := 'D_ADDRESS1';
+      SP_REGEX_PRECHECKS (varTableName, varFieldName, varAccountNo);
+      SP_CHECK_PERSONAL_CORP (varTableName, varFieldName, varAccountNo);    --ADDED BY MOIN FOR BOP
+
+      varFieldName := 'D_ADDRESS2';
+      SP_REGEX_PRECHECKS (varTableName, varFieldName, varAccountNo);
+      SP_CHECK_PERSONAL_CORP (varTableName, varFieldName, varAccountNo);    --ADDED BY MOIN FOR BOP
+
+      varFieldName := 'TELEPHONE';
+      SP_REGEX_PRECHECKS (varTableName, varFieldName, varAccountNo);
+
+      varFieldName := 'FAX';
+      SP_REGEX_PRECHECKS (varTableName, varFieldName, varAccountNo);
+
+      varFieldName := 'E_MAIL';
+--      SP_REGEX_PRECHECKS (varTableName, varFieldName, varAccountNo); --Comment out by zarq for BOP 5/4/16
+
+      varFieldName := 'P_ADDRESS1';
+      SP_REGEX_PRECHECKS (varTableName, varFieldName, varAccountNo);
+      SP_CHECK_PERSONAL_CORP (varTableName, varFieldName, varAccountNo);    --ADDED BY MOIN FOR BOP
+
+      varFieldName := 'P_ADDRESS2';
+      SP_REGEX_PRECHECKS (varTableName, varFieldName, varAccountNo);
+      SP_CHECK_PERSONAL_CORP (varTableName, varFieldName, varAccountNo);    --ADDED BY MOIN FOR BOP
+
+      --CUSTOMER_NO is the base condition and should be mandatory
+      varFieldName := 'CUSTOMER_NO';
+      SP_MANDATORY_PRECHECKS (varTableName, varFieldName, varAccountNo);
+      SP_LOOKUP_PRECHECKS (varTableName,
+                           varFieldName,
+                           varAccountNo,
+                           'STTMF_UPLOAD_CUSTOMER',
+                           'CUSTOMER_NO',
+                           0);
+      SP_UNIQUE_PRECHECKS (varTableName, varFieldName, varAccountNo);
+     --0911 temp SP_CUST_NO_IS_IN_FCC (varTableName, varFieldName, varAccountNo);
+
+      varFieldName := 'D_COUNTRY';
+      SP_LOOKUP_PRECHECKS (varTableName,
+                           varFieldName,
+                           varAccountNo,
+                           'STTMS_COUNTRY',
+                           'COUNTRY_CODE',
+                           0);
+
+      varFieldName := 'P_COUNTRY';
+      SP_LOOKUP_PRECHECKS (varTableName,
+                           varFieldName,
+                           varAccountNo,
+                           'STTMS_COUNTRY',
+                           'COUNTRY_CODE',
+                           0);
+
+      varFieldName := 'RESIDENT_STATUS';
+      SP_MANDATORY_PRECHECKS2 (varTableName, varFieldName, varAccountNo);
+      SP_POSSIBLE_VALUES_PRECHECKS (varTableName, varFieldName, varAccountNo);
+
+      varFieldName := 'CUSTOMER_PREFIX1';
+      SP_LOOKUP_PRE_CHECKS2 (varTableName,
+                             varFieldName,
+                             varAccountNo,
+                             'STTMS_CUST_PREFIX_DETAILS',
+                             'PREFIX1');
+
+      varFieldName := 'CUSTOMER_PREFIX2';
+      SP_LOOKUP_PRE_CHECKS2 (varTableName,
+                             varFieldName,
+                             varAccountNo,
+                             'STTMS_CUST_PREFIX_DETAILS',
+                             'PREFIX1');
+
+      varFieldName := 'BRANCH_CODE';
+      SP_MANDATORY_PRECHECKS (varTableName, varFieldName, varAccountNo);
+      SP_LOOKUP_PRECHECKS (varTableName,
+                           varFieldName,
+                           varAccountNo,
+                           'STTMS_BRANCH',
+                           'BRANCH_CODE',
+                           0);
+      SP_MASK_PRECHECKS (varTableName, varFieldName, varAccountNo);
+   END SP_STTM_UPLOAD_CUST_PERSONAL;
+
+
+
+   --Pre-Checks for CSTM_FUNCTION_USERDEF_FIELDS
+
+   PROCEDURE SP_CSTM_FUNCTION_USERDEF
+   IS
+      varTableName   VARCHAR2 (40) := 'CSTMF_FUNCTION_USERDEF_FIELDS';
+      varAccountNo   VARCHAR2 (40) := 'REC_KEY';
+      varFieldName   VARCHAR2 (40);
+   BEGIN
+      varBranchField := '''UDF''';
+      varIdentityNo := 'REC_KEY';
+
+      varFieldName := 'FUNCTION_ID';
+      SP_MANDATORY_PRECHECKS (varTableName, varFieldName, varAccountNo);
+      SP_POSSIBLE_VALUES_PRECHECKS (varTableName, varFieldName, varAccountNo);
+
+      varFieldName := 'REC_KEY';
+      SP_MANDATORY_PRECHECKS (varTableName, varFieldName, varAccountNo);
+      SP_VERIFY_REC_KEY (varTableName, varFieldName, varAccountNo);
+      SP_UNIQUE_PRECHECKS (varTableName, varFieldName, varAccountNo);
+   END SP_CSTM_FUNCTION_USERDEF;
+
+
+
+   --Pre-Checks for CSTM_FUNCTION_USERDEF_FIELDS
+
+   PROCEDURE SP_STTM_UPLOAD_CUST_DOMESTIC
+   IS
+      varTableName   VARCHAR2 (40) := 'STTMF_UPLOAD_CUST_DOMESTIC';
+      varAccountNo   VARCHAR2 (40) := 'CUSTOMER_NO';
+      varFieldName   VARCHAR2 (40);
+   BEGIN
+      varBranchField := '''DOMESTIC''';
+      varIdentityNo := 'CUSTOMER_NO';
+
+      varFieldName := 'CUSTOMER_NO';
+      SP_MANDATORY_PRECHECKS (varTableName, varFieldName, varAccountNo);
+      SP_REGEX_PRECHECKS (varTableName, varFieldName, varAccountNo);
+      SP_MASK_PRECHECKS (varTableName, varFieldName, varAccountNo);
+      SP_UNIQUE_PRECHECKS (varTableName, varFieldName, varAccountNo);
+     --0911 temp SP_CUST_NO_IS_IN_FCC (varTableName, varFieldName, varAccountNo);
+     SP_VERIFY_BANK_CUSTOMER (varTableName, varFieldName, varAccountNo);
+
+      varFieldName := 'EDUCATIONAL_STATUS';
+      SP_POSSIBLE_VALUES_PRECHECKS (varTableName, varFieldName, varAccountNo);
+
+      varFieldName := 'DEPENDENT_OTHERS';
+      SP_MASK_PRECHECKS (varTableName, varFieldName, varAccountNo);
+   END SP_STTM_UPLOAD_CUST_DOMESTIC;
+
+
+
+   --Pre-Checks for STTM_UPLOAD_CORP_DIRECTORS
+
+   PROCEDURE SP_STTM_UPLOAD_CORP_DIRECTORS
+   IS
+      varTableName   VARCHAR2 (40) := 'STTMF_UPLOAD_CORP_DIRECTORS';
+      varAccountNo   VARCHAR2 (40) := 'CUSTOMER_NO';
+      varFieldName   VARCHAR2 (40);
+   BEGIN
+      varBranchField := 'BRANCH_CODE';
+      varIdentityNo := 'CUSTOMER_NO';
+
+      varFieldName := 'CUSTOMER_NO';
+      SP_MANDATORY_PRECHECKS (varTableName, varFieldName, varAccountNo);
+      SP_REGEX_PRECHECKS (varTableName, varFieldName, varAccountNo);
+      SP_MASK_PRECHECKS (varTableName, varFieldName, varAccountNo);
+      SP_DIRECTORS_PRECHECKS(varTableName, varFieldName, varAccountNo); -- Added by Ahmad Qureshi
+      SP_LOOKUP_PRECHECKS (varTableName,varFieldName,varAccountNo,'STTMF_UPLOAD_CUSTOMER','CUSTOMER_NO',0);
+       
+      
+      varFieldName := 'DIRECTOR_NAME';
+      SP_MANDATORY_PRECHECKS (varTableName, varFieldName, varAccountNo);
+      
+      varFieldName := 'BRANCH_CODE';
+      SP_MANDATORY_PRECHECKS (varTableName, varFieldName, varAccountNo);
+      SP_LOOKUP_PRECHECKS (varTableName, varFieldName, varAccountNo, 'STTMS_BRANCH', 'BRANCH_CODE', 0);
+      
+      varFieldName := 'SLNO';
+      SP_MANDATORY_PRECHECKS (varTableName, varFieldName, varAccountNo);
+      
+      varFieldName := 'PCT_HOLDING';
+      SP_MASK_PRECHECKS (varTableName, varFieldName, varAccountNo);
+      
+      
+   END SP_STTM_UPLOAD_CORP_DIRECTORS;
+
+
+    --Pre-Checks for STTM_AUTO_LIAB_UPLOAD (added by Zarq (7/29/2015))
+    
+    PROCEDURE SP_STTM_AUTO_LIAB_UPLOAD
+    IS
+        varTableName   VARCHAR2 (40) := 'STTMF_AUTO_LIAB_UPLOAD';
+        varAccountNo   VARCHAR2 (40) := 'LIAB_NO';
+        varFieldName   VARCHAR2 (40);
+    BEGIN
+        varBranchField := 'LIAB_BRANCH';
+        varIdentityNo := 'LIAB_NO';
+        
+        varFieldName := 'CUST_NO';
+        SP_MANDATORY_PRECHECKS (varTableName, varFieldName, varAccountNo);
+        SP_LOOKUP_PRECHECKS (varTableName,varFieldName,varAccountNo,'STTMF_UPLOAD_CUSTOMER','CUSTOMER_NO',0);
+        
+        varFieldName := 'LIAB_NO';
+        SP_MANDATORY_PRECHECKS (varTableName, varFieldName, varAccountNo);
+        
+        varFieldName := 'LIAB_NAME';
+        SP_MANDATORY_PRECHECKS (varTableName, varFieldName, varAccountNo);
+        
+        varFieldName := 'LIAB_BRANCH';
+        SP_MANDATORY_PRECHECKS (varTableName, varFieldName, varAccountNo);
+        
+        varFieldName := 'LIAB_CCY';
+        SP_MANDATORY_PRECHECKS (varTableName, varFieldName, varAccountNo);
+        SP_LOOKUP_PRECHECKS (varTableName,varFieldName,varAccountNo,'CYTMS_CCY_DEFN','CCY_CODE',0);
+        
+        varFieldName := 'UNADVISED';
+        SP_POSSIBLE_VALUES_PRECHECKS (varTableName, varFieldName, varAccountNo);
+        
+        varFieldName := 'NETTING_REQUIRED';
+        SP_POSSIBLE_VALUES_PRECHECKS (varTableName, varFieldName, varAccountNo);
+
+        
+    END SP_STTM_AUTO_LIAB_UPLOAD;
+    
+    
+--    Pre-Checks for MSMT_UPLOAD_CUST_ADDRESS (added by Zarq (7/29/2015))
+     PROCEDURE SP_MSMT_UPLOAD_CUST_ADDRESS
+    IS
+        varTableName   VARCHAR2 (40) := 'MSTMF_UPLOAD_CUST_ADDRESS';
+        varAccountNo   VARCHAR2 (40) := 'CUSTOMER_NO';
+        varFieldName   VARCHAR2 (40);
+    BEGIN
+        varBranchField := 'BRANCH_CODE';
+        varIdentityNo := 'CUSTOMER_NO';
+        
+        
+        varFieldName := 'CUSTOMER_NO';
+        SP_MANDATORY_PRECHECKS (varTableName, varFieldName, varAccountNo);
+        SP_LOOKUP_PRECHECKS (varTableName, varFieldName, varAccountNo, 'STTMF_UPLOAD_CUSTOMER', 'CUSTOMER_NO', 0);
+        SP_UNIQUE_PRECHECKS (varTableName, varFieldName, varAccountNo);
+        
+        varFieldName := 'LOCATION';
+        SP_MANDATORY_PRECHECKS (varTableName, varFieldName, varAccountNo);
+        SP_LOOKUP_PRECHECKS (varTableName, varFieldName, varAccountNo, 'STTMS_LOCATION', 'LOC_CODE', 0);
+        
+        varFieldName := 'MEDIA';
+        SP_LOOKUP_PRECHECKS (varTableName, varFieldName, varAccountNo, 'MSTMS_MEDIA', 'MEDIA', 0);
+                           
+        varFieldName := 'ADDRESS1';
+        SP_MANDATORY_PRECHECKS (varTableName, varFieldName, varAccountNo);
+--        SP_REGEX_PRECHECKS (varTableName, varFieldName, varAccountNo);
+
+        varFieldName := 'ADDRESS2';
+--        SP_REGEX_PRECHECKS (varTableName, varFieldName, varAccountNo);
+      
+        varFieldName := 'LANGUAGE';
+        SP_MANDATORY_PRECHECKS (varTableName, varFieldName, varAccountNo);
+        SP_LOOKUP_PRECHECKS (varTableName, varFieldName, varAccountNo, 'SMTBS_LANGUAGE', 'LANG_CODE', 0);
+        
+        varFieldName := 'COUNTRY';
+        SP_MANDATORY_PRECHECKS (varTableName, varFieldName, varAccountNo);
+        SP_LOOKUP_PRECHECKS (varTableName, varFieldName, varAccountNo, 'STTMS_COUNTRY', 'COUNTRY_CODE', 0);
+        
+        varFieldName := 'NAME';
+        SP_MANDATORY_PRECHECKS (varTableName, varFieldName, varAccountNo);
+--        SP_MASK_PRECHECKS (varTableName, varFieldName, varAccountNo);
+
+        varFieldName := 'HOLD_MAIL';
+        SP_POSSIBLE_VALUES_PRECHECKS (varTableName, varFieldName, varAccountNo);
+              
+        
+    END SP_MSMT_UPLOAD_CUST_ADDRESS;
+        
+      
+
+   PROCEDURE SP_CIF_PRECHECKS
+   IS
+   BEGIN
+      DELETE FROM   REJECTION
+            WHERE   SOURCE_CODE = 'CIF';
+
+      DELETE_MODULE_EXCEPTIONS ('Customers');
+      SP_STTM_UPLOAD_CUSTOMER;
+      SP_STTM_UPLOAD_CUST_PROFESSION;
+      SP_STTM_UPLOAD_CUST_CORPORATE;
+      SP_STTM_UPLOAD_CUST_PERSONAL;
+      SP_CSTM_FUNCTION_USERDEF;
+      SP_MISC_PRECHECKS;
+      SP_STTM_UPLOAD_CUST_DOMESTIC;
+      SP_STTM_UPLOAD_CORP_DIRECTORS;
+      SP_STTM_AUTO_LIAB_UPLOAD;
+      SP_MSMT_UPLOAD_CUST_ADDRESS; -- ADDED BY ZARQ (31/3/16)
+
+      COMMIT;
+   END SP_CIF_PRECHECKS;
+END PKG_CIF_PRECHECKS;
+/
