@@ -1,3 +1,3 @@
 # Oracle PLSQL
-## Basic UnderStanding of thE PLSQL language
+## Basic UnderStanding of the PLSQL language
 
